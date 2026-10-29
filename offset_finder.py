@@ -21,22 +21,34 @@ class Signature:
     offset: int
     extra: int
 
-    def find(self, memory: bytes, base_addr: int) -> int | None:
-        """Return the matched target relative to the supplied memory base."""
+    def find(
+        self,
+        memory: bytes,
+        base_addr: int,
+        target_range: tuple[int, int] | None = None,
+    ) -> int | None:
+        """Return a matching target relative to the supplied memory base.
+
+        When supplied, ``target_range`` bounds the absolute target address.
+        """
         tokens = self.pattern.split()
         pattern = b"".join(
             b"." if token in ("?", "??") else re.escape(bytes([int(token, 16)]))
             for token in tokens
         )
-        match = re.search(pattern, memory, re.DOTALL)
-        if match is None or match.start() + self.offset + 4 > len(memory):
-            return None
-        relative = struct.unpack_from("<i", memory, match.start() + self.offset)[0]
-        return match.start() + relative + self.extra
+        # Lookahead also finds overlapping occurrences of the signature.
+        for match in re.finditer(b"(?=" + pattern + b")", memory, re.DOTALL):
+            if match.start() + self.offset + 4 > len(memory):
+                continue
+            relative = struct.unpack_from("<i", memory, match.start() + self.offset)[0]
+            result = match.start() + relative + self.extra
+            if target_range is None or target_range[0] <= base_addr + result < target_range[1]:
+                return result
+        return None
 
 
 def find_offsets(process_name: str = "deadlock.exe", process: LinuxProcess | None = None) -> dict[str, int]:
-    """Scan readable module mappings, failing explicitly on missing signatures."""
+    """Scan readable PE image ranges, failing explicitly on missing signatures."""
     owned = process is None
     if owned:
         process = LinuxProcess(find_process(process_name))
@@ -47,8 +59,7 @@ def find_offsets(process_name: str = "deadlock.exe", process: LinuxProcess | Non
             "schemasystem.dll": ["schema_system_interface"],
         }
         for module, names in groups.items():
-            mappings = process.mappings(module)
-            base = min(mapping.start - mapping.offset for mapping in mappings)
+            base, image_size, mappings = process.module_image(module)
             pending = {name: Signature(*SIGNATURES[name]) for name in names}
             for mapping in mappings:
                 if "r" not in mapping.permissions or not pending:
@@ -61,7 +72,7 @@ def find_offsets(process_name: str = "deadlock.exe", process: LinuxProcess | Non
                     size = min(chunk_size + overlap, mapping.end - position)
                     data = process.read_bytes(position, size)
                     for name, sig in list(pending.items()):
-                        result = sig.find(data, position)
+                        result = sig.find(data, position, (base, base + image_size))
                         if result is not None:
                             offsets[name] = position - base + result
                             logger.info("%s: %#x", name, offsets[name])
@@ -70,7 +81,7 @@ def find_offsets(process_name: str = "deadlock.exe", process: LinuxProcess | Non
             if pending:
                 raise RuntimeError(
                     f"Signatures not found in {module}: {', '.join(pending)}. "
-                    "The game version or Proton memory layout may have changed."
+                    "The signatures may be outdated or the Proton memory layout may differ."
                 )
         return offsets
     finally:
