@@ -259,8 +259,9 @@ class AimbotCleanupTests(unittest.TestCase):
                 self.events.append('closed')
 
         device = Input()
+        memory = SimpleNamespace(read_entity=lambda index: {"hero": None, "aim_angle": 0.0})
         with patch('deadlock.aimbot.X11Input', return_value=device):
-            bot = Aimbot(None)
+            bot = Aimbot(memory)
         with self.assertRaises(KeyboardInterrupt):
             bot.run()
         self.assertEqual(device.events, [(1, True), (1, False), 'closed'])

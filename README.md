@@ -106,6 +106,13 @@ the specific game version before relying on any results. A match alone does
 not establish that an offset is correct; an incorrect write can corrupt the
 game process.
 
+If the local player reports an unknown hero ID (including `0`) or a null
+pointer, the aimbot stops aiming and waits without repeatedly logging a
+traceback. Enter a match with a selected hero and retry. If the warning
+persists, the game version, process selection, signatures, or hardcoded offsets
+may be incompatible. Do not treat a known hero ID or a signature match as
+proof that memory addresses are safe to write.
+
 The GUI may offer to open the project's release page when an update is
 available. The command-line aimbot checks for updates at startup and exits if
 one is available.
