@@ -54,9 +54,10 @@ def find_offsets(process_name: str = "deadlock.exe", process: LinuxProcess | Non
         process = LinuxProcess(find_process(process_name))
     try:
         offsets = {}
+        # The runtime only uses client.dll offsets. Do not require a schema
+        # signature that no consumer reads and that may change independently.
         groups = {
             "client.dll": ["local_player_controller", "view_matrix", "entity_list", "camera_manager"],
-            "schemasystem.dll": ["schema_system_interface"],
         }
         for module, names in groups.items():
             base, image_size, mappings = process.module_image(module)

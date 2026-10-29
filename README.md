@@ -93,10 +93,11 @@ DEADUNLOCK_PID=12345 python -m deadlock.aimbot_gui
 
 Replace `12345` with the real game PID, not Steam's `reaper` or another launcher.
 For example, inspect `ps -u "$USER" -o pid,comm,args` and, when permitted, check
-`/proc/<pid>/maps` for the two DLLs below. The process must have file-backed
-`client.dll` and `schemasystem.dll` mappings visible in `/proc/<pid>/maps`.
-The scanner validates the in-memory PE headers and scans readable file-backed
-and anonymous mappings within each module's declared image size. This is an
+`/proc/<pid>/maps` for `client.dll`. The process must have a file-backed
+`client.dll` header mapping visible there. The scanner validates the in-memory
+PE header and scans readable file-backed and anonymous mappings within the
+module's declared image size. `schemasystem.dll` is not required by the current
+runtime and its legacy signature is not scanned. This is an
 experimental approximation of Proton's layout, and fails if signatures are
 missing. PE mapping layouts and game updates may require different signatures
 or module base calculations. Hardcoded entity and camera offsets can also become stale.

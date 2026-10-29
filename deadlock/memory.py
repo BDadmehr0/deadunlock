@@ -20,7 +20,9 @@ class Offsets:
     view_matrix: int
     entity_list: int
     camera_manager: int
-    schema_system_interface: int
+    # Kept for callers that construct Offsets with the legacy fifth value.
+    # The current runtime does not resolve or use this offset.
+    schema_system_interface: int | None = None
 
 
 class DeadlockMemory:
