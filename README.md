@@ -91,12 +91,15 @@ set `DEADUNLOCK_PID` to the actual game PID to avoid process-name ambiguity:
 DEADUNLOCK_PID=12345 python -m deadlock.aimbot_gui
 ```
 
-Replace `12345` with the real PID. The process must have file-backed
+Replace `12345` with the real game PID, not Steam's `reaper` or another launcher.
+For example, inspect `ps -u "$USER" -o pid,comm,args` and, when permitted, check
+`/proc/<pid>/maps` for the two DLLs below. The process must have file-backed
 `client.dll` and `schemasystem.dll` mappings visible in `/proc/<pid>/maps`.
-The scanner reads readable file-backed mappings and fails if required
-signatures are missing; it cannot find code in anonymous-only mappings. PE
-mapping layouts and game updates may require different signatures or module
-base calculations. Hardcoded entity and camera offsets can also become stale.
+The scanner validates the in-memory PE headers and scans readable file-backed
+and anonymous mappings within each module's declared image size. This is an
+experimental approximation of Proton's layout, and fails if signatures are
+missing. PE mapping layouts and game updates may require different signatures
+or module base calculations. Hardcoded entity and camera offsets can also become stale.
 Inspect and update `signature_patterns.py` and `deadlock/mem_offsets.py` for
 the specific game version before relying on any results. A match alone does
 not establish that an offset is correct; an incorrect write can corrupt the

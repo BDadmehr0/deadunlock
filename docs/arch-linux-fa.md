@@ -67,11 +67,16 @@ python -m deadlock.esp         # overlay؛ --debug برای گزارش بیشت�
 DEADUNLOCK_PID=12345 python -m deadlock.aimbot_gui
 ```
 
-PID واقعی را مثلاً با `ps -ef | grep -i deadlock` پیدا کنید؛ دقت کنید پردازش
-بازی را انتخاب کنید، نه Steam یا خود `grep`. برنامه باید mappingهای فایل‌های
-`client.dll` و `schemasystem.dll` را در `/proc/<pid>/maps` ببیند. در بعضی
+PID واقعی را مثلاً با `ps -u "$USER" -o pid,comm,args | grep -iE 'deadlock|project8'`
+پیدا کنید؛ پردازش بازی را انتخاب کنید، نه `reaper`، Steam یا خود `grep`. در صورت
+دسترسی، با `grep -iE '(client|schemasystem)\.dll' /proc/PID/maps` بررسی کنید
+که هر دو فایل در پردازش انتخاب‌شده mapping شده‌اند (به جای `PID` شماره را بگذارید).
+ممکن است برای دیدن maps هم ابتدا تنظیمات دسترسی بخش بعد لازم باشد. اگر PID به
+اشتباه انتخاب شود، از `DEADUNLOCK_PID` برای تعیین دستی آن استفاده کنید. در بعضی
 چیدمان‌های Proton این فایل‌ها یا signatureها پیدا نمی‌شوند؛ همچنین به‌روزرسانی
-بازی می‌تواند offsetها را تغییر دهد. نوشتن در آدرس اشتباه ممکن است بازی را خراب کند.
+بازی می‌تواند offsetها را تغییر دهد. اسکنر علاوه بر نگاشت فایل، نواحی ناشناس
+داخل محدودهٔ تصویر PE را نیز بررسی می‌کند، اما درستی signatureها و سازگاری با
+همهٔ چیدمان‌های Proton تضمین نشده است. نوشتن در آدرس اشتباه ممکن است بازی را خراب کند.
 
 ## دسترسی و عیب‌یابی
 
@@ -90,7 +95,7 @@ cat /proc/sys/kernel/yama/ptrace_scope
 ```bash
 old_scope=$(cat /proc/sys/kernel/yama/ptrace_scope)
 sudo sysctl -w kernel.yama.ptrace_scope=0
-# برنامه را اجرا کنید و پس از پایان کار:
+# برنامه را در همین فاصله اجرا و آزمایش کنید؛ پس از پایان کار:
 sudo sysctl -w "kernel.yama.ptrace_scope=$old_scope"
 ```
 
