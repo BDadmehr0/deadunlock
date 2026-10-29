@@ -1,203 +1,122 @@
-# DeadUnlock
+# DeadUnlock (Linux / Proton)
 
-<p align="center">
-  <img src="img/deadunlock_icon.png" alt="Project icon" width="128">
-</p>
+DeadUnlock is an external aimbot and ESP experiment for Valve's Deadlock. It
+reads and writes the game's memory from a separate process. This Linux port
+**targets the Windows game running under Proton**, not a native Linux build.
+It is experimental: the original Windows signatures and structure offsets may
+not match the current game or Proton's memory mappings. Neither live game
+compatibility nor the overlay has been verified by this port.
 
-Aimbot and ESP for Valve's Deadlock game.
+This project is for educational and research purposes. Using it may violate
+Deadlock's rules and can result in account penalties. Do not use it where you
+lack permission to inspect or modify a process.
 
-<p align="center">
-  <img src="img/output.gif" alt="Demo of DeadUnlock in action" width="600">
-</p>
+## Requirements
 
-This is an **external hack**, meaning the scripts run in a separate
-process and manipulate the game's memory from the outside rather than
-injecting code into the executable. It uses standard Windows APIs to
-read and write memory, keeping the hack isolated from the game
-process.
+- Linux, Python 3.11, Steam with Deadlock running under Proton.
+- An **X11 session** with the XTEST extension for global input and synthetic
+  events. Native Wayland is not supported; Xwayland does not provide global
+  input for native Wayland windows. A game using exclusive input grabs or raw
+  input may not accept synthesized events.
+- For ESP, an X11 compositor, Qt's xcb platform dependencies, and a game window
+  on the primary monitor at the monitor's full resolution. The overlay is a
+  transparent, click-through, always-on-top window; window managers may differ
+  in how they handle it. It does not track window position or multiple monitors.
+  Use borderless/windowed mode; exclusive fullscreen may hide it.
+- Permission to inspect and write the target process via `/proc/<pid>/mem`.
+  Processes must normally run as the same user, be dumpable, and pass Linux
+  ptrace/LSM checks. The port does not bypass game security mechanisms.
 
-## Downloads 
-
-Builds are automatically generated on every push and published under the
-[releases](https://github.com/hmate9/deadunlock/releases). Grab the latest
-`deadunlock.exe` from the
-[latest release](https://github.com/hmate9/deadunlock/releases/latest).
-
-## About
-
-This project started as a personal learning exercise to better understand game
-hacking techniques and memory manipulation. In the process we were surprised at
-how limited Valve's anti-cheat measures are, given that this code continually
-reads from and writes directly into the game's memory. The entire codebase is
-written in Python for maximum readability while still offering surprisingly
-solid performance.
-
-## Note
-
-This repository is provided for educational and research purposes only. Use it at your own risk.
-
-## Disclaimer
-
-The authors and contributors of this project do not endorse or encourage cheating or bypassing game security mechanisms. Any use of the code in this repository that violates the terms of service of games, software, or platforms is the sole responsibility of the user.
-
-You are fully responsible for any consequences, including account bans or other penalties, that may result from the use of this code.
-
-## Running the Tools
-
-### Installation
-
-The project requires Python 3.10+ on Windows. Install the dependencies with:
+On Debian/Ubuntu, install Python's venv and Tk support and Qt/X11 runtime
+libraries (other distributions use different package names):
 
 ```bash
+sudo apt install python3-venv python3-tk libgl1 libxcb-xinerama0 libxkbcommon-x11-0
+python3 -m venv .venv
+. .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Both the aimbot and ESP will check for updates on startup and will
-automatically run ``git pull`` if your local copy is out of date.
+Additional Qt xcb libraries may be needed depending on the distribution. If
+Qt cannot load its `xcb` plugin, consult the distribution's Qt/X11 packages.
 
-### Aimbot
+### Process permissions
 
-Launch Deadlock first and then start the aimbot with:
-
-```bash
-python -m deadlock.aimbot
-```
-
-Pass ``--debug`` to print detailed log messages which can help when
-troubleshooting:
+On many systems Yama's `ptrace_scope=1` prevents access to an unrelated
+process, even under the same account. Check it with:
 
 ```bash
-python -m deadlock.aimbot --debug
+cat /proc/sys/kernel/yama/ptrace_scope
 ```
 
-The script connects to the game's process and continually adjusts your camera
-towards enemy targets.
+If your security policy permits, an administrator can temporarily set it to
+`0` with `sudo sysctl -w kernel.yama.ptrace_scope=0` and restore the previous
+value afterward. This relaxes protections **system-wide**, not just for this
+application. Other restrictions (such as SELinux, containers, or a non-dumpable
+process) can still block access. Avoid running the GUI or game as root.
 
-The aimbot automatically selects the closest target when you hold down the left
-mouse button. If you want to shoot without the aimbot—for example at troopers,
-towers or souls—hold the right mouse button instead and make sure to remap the
-alternate fire key in Deadlock's settings so it doesn't conflict.
+## Running
 
-#### Headshot targeting
-
-The aimbot can aim for either the head or center mass of targets based on the
-`headshot_probability` setting (default 25%). To make targeting behavior more
-consistent and human-like, the aimbot caches its headshot decision for 0.4
-seconds at a time. This means that once the aimbot decides whether to aim for
-the head or body, it will maintain that targeting preference for the next 0.4
-seconds before making a new random decision. This prevents rapid switching
-between head and body targeting that could appear unnatural.
-
-If no enemy has been targeted for more than two seconds, the
-`headshot_on_acquire` setting (enabled by default) forces headshots for the next
-0.4 seconds when a new target is acquired.
-
-#### Hero ability lock
-
-When playing **Grey Talon** or **Yamato**, pressing **Q** (ability 1) keeps the
-aimbot locked on your target for a short duration. Using **Vindicta's** **R**
-(ability 4) triggers the same lock. These timeouts can be changed through
-``AimbotSettings`` (`grey_talon_lock`, `yamato_lock`, and `vindicta_lock`). The
-hotkeys can also be configured (`grey_talon_key`, `yamato_key`, and
-`vindicta_key`) or toggled completely using the GUI.
-
-For **Paradox**, pressing **R** automatically fires **E** after 0.05 seconds.
-Both keys can be changed via ``paradox_r_key`` and ``paradox_e_key`` and the
-shortcut can be disabled with ``paradox_shortcut_enabled``.
-
-A small Tkinter GUI is available as well:
+Start Deadlock in Proton first, then activate the virtual environment and run:
 
 ```bash
-python -m deadlock.aimbot_gui
+python -m deadlock.aimbot_gui  # settings and start/stop controls
+python -m deadlock.aimbot      # command-line aimbot
+python -m deadlock.esp         # transparent overlay
 ```
 
-It lets you tweak the aimbot settings, enable or disable the hero ability
-locks and change the keys used to trigger them.
+The command-line aimbot and ESP accept `--debug`. The aimbot uses the left
+mouse button to aim; the right button synthesizes a left click without aiming.
+Map alternate fire in the game so the right button does not conflict. The GUI
+allows changing the hero ability hotkeys. X11 key mappings are used for these
+single-character keys. Synthetic inputs and game input handling depend on the
+X server and Proton setup.
 
-### ESP Overlay
-
-To render a simple ESP overlay showing player skeletons, run:
+The default process name is `deadlock.exe`. If Proton exposes a different
+name, set `DEADUNLOCK_PROCESS` to the exact executable name. Alternatively,
+set `DEADUNLOCK_PID` to the actual game PID to avoid process-name ambiguity:
 
 ```bash
-python -m deadlock.esp
+DEADUNLOCK_PID=12345 python -m deadlock.aimbot_gui
 ```
 
-To get verbose output while the overlay runs, add ``--debug``:
+Replace `12345` with the real PID. The process must have file-backed
+`client.dll` and `schemasystem.dll` mappings visible in `/proc/<pid>/maps`.
+The scanner reads readable file-backed mappings and fails if required
+signatures are missing; it cannot find code in anonymous-only mappings. PE
+mapping layouts and game updates may require different signatures or module
+base calculations. Hardcoded entity and camera offsets can also become stale.
+Inspect and update `signature_patterns.py` and `deadlock/mem_offsets.py` for
+the specific game version before relying on any results. A match alone does
+not establish that an offset is correct; an incorrect write can corrupt the
+game process.
 
-```bash
-python -m deadlock.esp --debug
-```
+The GUI may offer to open the project's release page when an update is
+available. The command-line aimbot checks for updates at startup and exits if
+one is available.
 
-This spawns a transparent Pygame window that follows the game and updates in
-real time.
+## Packaging
 
-The overlay is also handy for discovering bone indexes for each hero. When
-Valve updates a character model, running it lets you read the new bone numbers
-and update the head and body mappings stored in
-[`deadlock/heroes.py`](deadlock/heroes.py).
-
-## Offset Signatures
-
-The offset finder relies on *signatures*—unique byte patterns in the game's modules—to locate
-important memory addresses such as the entity list or camera manager. These patterns are
-defined in [`signature_patterns.py`](signature_patterns.py) and consumed by
-`offset_finder.py` when scanning the running process.
-
-All offsets derived from these patterns are stored in
-[`deadlock/mem_offsets.py`](deadlock/mem_offsets.py).  This module is imported
-throughout the project to avoid sprinkling magic numbers across the codebase.
-
-If Valve updates Deadlock and the underlying code changes, these patterns may no longer match.
-Outdated signatures will result in missing or incorrect offsets, causing other tools in this
-repository to malfunction. When that happens, the signatures need to be updated by scanning the
-new game binaries for the correct patterns.
-
-## Building a standalone executable
-
-You can package the GUI into a single Windows executable using
-[PyInstaller](https://pyinstaller.org/). Install it first:
+On Linux, build the GUI for the same architecture/distribution family with:
 
 ```bash
 pip install pyinstaller
-```
-
-Then create the executable with:
-
-```bash
 pyinstaller deadunlock.spec
+./dist/deadunlock
 ```
 
-The resulting `.exe` will be placed in the `dist` folder and can be run on
-machines without Python installed.
+This produces a Linux executable, not a Windows `.exe`. It still needs an X11
+desktop, access to the game process, and compatible system libraries.
 
-## Contributing
-
-Contributions are very welcome. If you have ideas or fixes, fork the repository, create a feature branch and open a pull request against `main`.
-Run the following to make sure all Python files compile before submitting:
+## Development
 
 ```bash
+python -m unittest discover -s tests -v
 python -m py_compile $(git ls-files '*.py')
 ```
 
-### Project structure
-
-- The repository is organised as follows:
-
-- `deadlock/` – Python package with the main functionality:
-  - `__init__.py` – exposes the public API and lazily loads optional modules.
-  - `aimbot.py` – implements the aimbot logic and input handling.
-  - `aimbot_gui.py` – Tkinter interface for configuring and running the aimbot.
-  - `esp.py` – pygame overlay drawing simple player skeletons.
-  - `gui_utils.py` – helper functions used by the GUI.
-  - `heroes.py` – hero enumeration and bone lookups.
-  - `helpers.py` – vector math and coordinate conversion utilities.
-  - `memory.py` – wrapper over ``pymem`` for reading game memory.
-  - `mem_offsets.py` – central location for hardcoded memory offsets.
-  - `update_checker.py` – utilities for checking GitHub for new releases.
-- `launcher.py` – entry point used when bundling the GUI with PyInstaller.
-- `offset_finder.py` – scans the game to find updated memory offsets.
-  - `signature_patterns.py` – byte patterns consumed by the offset finder.
-  - `deadunlock.spec` – PyInstaller configuration for building an executable.
-- `version.txt` – text file storing the current version string.
-- `img/` – images used in the README and GUI icons.
-
+`deadlock/linux_process.py` implements process access, `offset_finder.py`
+scans loaded modules, `deadlock/linux_input.py` implements X11 input, and
+`deadlock/esp.py` implements the Qt overlay. `deadlock/memory.py` contains the
+game-specific memory logic; `deadlock/aimbot.py` and `aimbot_gui.py` implement
+the aimbot and its Tk interface.

@@ -1,27 +1,24 @@
-"""Public API for interacting with Deadlock.
+"""Public API for the Deadlock Linux/Proton tools.
 
-The heavy ESP module depends on :mod:`numpy` which is not required by the
-aimbot.  To keep binary start-up lightweight, it is imported lazily on first
-access.
+Components are imported lazily so command-line modules and the offset scanner
+can run without importing the GUI or input backends prematurely.
 """
 
-from .memory import DeadlockMemory
-from .aimbot import Aimbot, AimbotSettings
-from .heroes import HeroIds
+from importlib import import_module
 
-__all__ = [
-    "DeadlockMemory",
-    "Aimbot",
-    "AimbotSettings",
-    "HeroIds",
-    "ESP",
-]
+__all__ = ["DeadlockMemory", "Aimbot", "AimbotSettings", "HeroIds", "ESP"]
+
+_MODULES = {
+    "DeadlockMemory": ".memory",
+    "Aimbot": ".aimbot",
+    "AimbotSettings": ".aimbot",
+    "HeroIds": ".heroes",
+    "ESP": ".esp",
+}
 
 
 def __getattr__(name: str):
-    """Lazily import optional modules on demand."""
-    if name == "ESP":
-        from .esp import ESP
-
-        return ESP
-    raise AttributeError(name)
+    """Load public components on first access."""
+    if name not in _MODULES:
+        raise AttributeError(name)
+    return getattr(import_module(_MODULES[name], __name__), name)

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-"""Thin wrapper over :mod:`pymem` for reading Deadlock game memory."""
+"""Read and write Deadlock memory through Linux procfs."""
 
 from dataclasses import dataclass
+import os
 from typing import Dict, Tuple
 
-import pymem
+from .linux_process import LinuxProcess, find_process
 
 from .heroes import HeroIds
 from .helpers import Vector3
@@ -23,22 +24,25 @@ class Offsets:
 
 
 class DeadlockMemory:
-    """Small wrapper around ``pymem`` with dynamic offsets."""
+    """Small wrapper around Linux process memory with dynamic offsets."""
 
-    def __init__(self, process: str = "deadlock.exe") -> None:
+    def __init__(self, process: str | None = None) -> None:
         """Open the game process and locate dynamic offsets."""
 
-        self.process_name = process
-        self.pm = pymem.Pymem(process)
-        self.client_base = pymem.process.module_from_name(
-            self.pm.process_handle, "client.dll"
-        ).lpBaseOfDll
-        self.offsets = self._read_offsets()
+        self.process_name = process or os.environ.get("DEADUNLOCK_PROCESS", "deadlock.exe")
+        pid = os.environ.get("DEADUNLOCK_PID")
+        self.pm = LinuxProcess(int(pid) if pid else find_process(self.process_name))
+        try:
+            self.client_base = self.pm.module_base("client.dll")
+            self.offsets = self._read_offsets()
+        except Exception:
+            self.pm.close()
+            raise
 
     def _read_offsets(self) -> Offsets:
         """Read offsets via :mod:`offset_finder`."""
 
-        offs = offset_finder.find_offsets(self.process_name)
+        offs = offset_finder.find_offsets(self.process_name, self.pm)
         return Offsets(**offs)
 
     # Memory helpers -----------------------------------------------------

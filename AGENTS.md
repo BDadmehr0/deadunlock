@@ -1,12 +1,12 @@
 # AGENT Guidelines
 
-This repository contains a Windows-only aimbot/ESP for the Deadlock game.
+This repository contains a Linux/Proton aimbot and ESP for the Deadlock game.
 Python modules live in the `deadlock` package and various helper scripts
 reside in the project root.
 
 ## Coding conventions
 
-- Target **Python 3.11** and keep compatibility with standard libraries only.
+- Target **Python 3.11**. Use the dependencies listed in `requirements.txt`.
 - Indent with **4 spaces** and keep line length under **100** characters.
 - Provide triple quoted docstrings for all public modules, classes and functions.
 - Use type hints for function signatures and dataclasses for simple containers.

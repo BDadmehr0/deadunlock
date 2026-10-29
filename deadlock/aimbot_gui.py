@@ -52,6 +52,7 @@ class AimbotApp:
         self.settings = load_saved_settings()
         self.bot: Aimbot | None = None
         self.bot_thread: threading.Thread | None = None
+        self.stop_event = threading.Event()
         self.is_running = False
         self.is_paused = False
 
@@ -572,6 +573,11 @@ class AimbotApp:
                         open_release_page()
                         return
 
+            if self.bot_thread and self.bot_thread.is_alive():
+                messagebox.showinfo("Please wait", "The previous aimbot is still stopping.")
+                return
+            self.stop_event.clear()
+            self.bot = None
             self.is_running = True
             self.is_paused = False
             self._update_status("Starting...", "#60a5fa")
@@ -593,13 +599,27 @@ class AimbotApp:
         """Initialise memory and run the aimbot."""
         try:
             mem = DeadlockMemory()
-            self.bot = Aimbot(mem, self.settings)
+            if self.stop_event.is_set():
+                mem.pm.close()
+                return
+            try:
+                self.bot = Aimbot(mem, self.settings)
+            except Exception:
+                mem.pm.close()
+                raise
+            if self.stop_event.is_set():
+                self.bot.input.close()
+                mem.pm.close()
+                return
             self.log_queue.put("Aimbot started successfully.")
             self.root.after(0, lambda: (
-                self._update_status("Running", "#10b981"),
+                self._update_status("Running", "#10b981") if self.is_running else None,
                 self._update_button_states()
             ))
-            self._run_aimbot()
+            try:
+                self._run_aimbot()
+            finally:
+                mem.pm.close()
         except Exception as exc:
             self.is_running = False
             msg = str(exc)
@@ -651,12 +671,12 @@ class AimbotApp:
         if not self.is_running:
             return
             
+        self.stop_event.set()
         if self.bot:
             self.bot.stop()
             
         self.is_running = False
         self.is_paused = False
-        self.bot = None
         
         self._update_status("Stopped", "red")
         self._update_button_states()
