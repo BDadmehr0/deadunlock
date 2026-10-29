@@ -1,138 +1,96 @@
+"""Transparent, click-through X11 overlay for player bone positions."""
+
 from __future__ import annotations
 
-"""Simplistic ESP (Extra Sensory Perception) overlay using pygame."""
-
-import ctypes
-import time
-import logging
 import argparse
+import logging
+import sys
 
 import numpy as np
-import pygame
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QColor, QPainter, QPen
+from PyQt5.QtWidgets import QApplication, QWidget
 
+from . import mem_offsets as mo
 from .helpers import world_to_screen
 from .memory import DeadlockMemory
-from . import mem_offsets as mo
-from .update_checker import ensure_up_to_date
 
 logger = logging.getLogger(__name__)
 
 
-class ESP:
-    """Tiny pygame-based overlay rendering player skeletons."""
+class ESP(QWidget):
+    """Fullscreen translucent overlay; requires an X11 compositor."""
 
     def __init__(self, mem: DeadlockMemory) -> None:
-        """Create an overlay bound to ``mem``."""
-
+        """Create the overlay bound to ``mem``."""
+        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+                         | Qt.Tool | Qt.WindowTransparentForInput)
         self.mem = mem
-        pygame.init()
-        info = pygame.display.Info()
-        self.screen = pygame.display.set_mode((info.current_w, info.current_h), pygame.NOFRAME | pygame.SRCALPHA)
-        pygame.display.set_caption("ESP Overlay")
-        self.clock = pygame.time.Clock()
+        self.points = []
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setGeometry(QApplication.primaryScreen().geometry())
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.refresh)
+        self.timer.start(16)
 
-        hwnd = pygame.display.get_wm_info()["window"]
-        ctypes.windll.user32.SetWindowLongW(hwnd, -20, ctypes.windll.user32.GetWindowLongW(hwnd, -20) | 0x80000 | 0x20)
-        ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, 0, 255, 1)
-        logger.info("ESP overlay initialised")
-
-    def draw_skeleton(self, bones, color=(255, 0, 0)) -> None:
-        """Draw a list of bone pairs to the screen.
-
-        The original proof-of-concept script renders each bone as a tiny red dot
-        with its index printed above it.  ``bones`` is expected to contain
-        ``(start, end)`` tuples where ``start`` and ``end`` are 3D coordinates.
-        """
-
-        for idx, (start, end) in enumerate(bones):
-            start_pos = world_to_screen(
-                self.view_matrix, start, self.width, self.height
-            )
-            end_pos = world_to_screen(
-                self.view_matrix, end, self.width, self.height
-            )
-            if start_pos and end_pos:
-                # A line where start and end are identical produces a small dot.
-                pygame.draw.line(self.screen, color, start_pos, end_pos, 2)
-                font = pygame.font.Font(None, 18)
-                text = font.render(str(idx), True, (255, 255, 255))
-                self.screen.blit(text, (start_pos[0], start_pos[1] - 10))
-
-    @property
-    def width(self) -> int:
-        return self.screen.get_width()
-
-    @property
-    def height(self) -> int:
-        return self.screen.get_height()
-
-    def update_view_matrix(self) -> None:
-        raw = self.mem.pm.read_bytes(self.mem.client_base + self.mem.offsets.view_matrix, 16 * 4)
-        self.view_matrix = np.frombuffer(raw, dtype=np.float32).reshape(4, 4)
-
-    def run(self) -> None:
-        """Main overlay loop."""
-
-        logger.info("ESP loop started")
-        running = True
-        while running:
-            self.screen.fill((0, 0, 0, 0))
-            self.update_view_matrix()
+    def refresh(self) -> None:
+        """Read the current view matrix and visible player bones."""
+        try:
+            raw = self.mem.pm.read_bytes(self.mem.client_base + self.mem.offsets.view_matrix, 64)
+            matrix = np.frombuffer(raw, dtype="<f4").reshape(4, 4)
+            points = []
             for i in range(1, 16):
                 try:
                     data = self.mem.read_entity(i)
-                except Exception:
-                    logger.debug("Failed to read entity %d", i)
-                    continue
-                bone_array = self.mem.read_longlong(
-                    data["node"] + mo.BONE_ARRAY
-                )
-                bones = []
-                for b in range(0, 64):
-                    start = (
-                        self.mem.read_float(bone_array + b * mo.BONE_STEP),
-                        self.mem.read_float(bone_array + b * mo.BONE_STEP + 4),
-                        self.mem.read_float(bone_array + b * mo.BONE_STEP + 8),
-                    )
-                    bones.append((start, start))
-                logger.debug("Drawing skeleton for entity %d", i)
-                self.draw_skeleton(bones)
+                    bone_array = self.mem.read_longlong(data["node"] + mo.BONE_ARRAY)
+                    for b in range(64):
+                        addr = bone_array + b * mo.BONE_STEP
+                        position = tuple(self.mem.read_float(addr + j * 4) for j in range(3))
+                        point = world_to_screen(matrix, position, self.width(), self.height())
+                        if point:
+                            points.append((b, point))
+                except (OSError, ValueError, KeyError):
+                    logger.debug("Failed to read entity %d", i, exc_info=True)
+            self.points = points
+            self.update()
+        except (OSError, ValueError):
+            logger.exception("Failed to update overlay")
+            self.close()
 
-            pygame.display.flip()
-            self.clock.tick(60)
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-            time.sleep(0.001)
-        logger.info("ESP loop stopped")
+    def paintEvent(self, event) -> None:
+        """Draw the last captured points onto the transparent window."""
+        painter = QPainter(self)
+        painter.setPen(QPen(QColor(255, 0, 0), 3))
+        for index, (x, y) in self.points:
+            x, y = int(x), int(y)
+            painter.drawPoint(x, y)
+            painter.setPen(QColor(255, 255, 255))
+            painter.drawText(x, y - 10, str(index))
+            painter.setPen(QPen(QColor(255, 0, 0), 3))
+        painter.end()
+
+    def run(self) -> None:
+        """Show the overlay and run Qt's event loop."""
+        self.show()
+        QApplication.instance().exec_()
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Run the ESP overlay entry point.
-
-    Parameters
-    ----------
-    argv:
-        Optional command line arguments.  Providing ``--debug`` enables
-        verbose logging output.
-    """
-
+    """Run the overlay on an X11 desktop."""
     parser = argparse.ArgumentParser(description="Deadlock ESP overlay")
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="enable debug logging",
-    )
+    parser.add_argument("--debug", action="store_true", help="enable debug logging")
     args = parser.parse_args(argv)
-
-    logging.basicConfig(
-        level=logging.DEBUG if args.debug else logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
-    ensure_up_to_date()
+    logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
+    app = QApplication(sys.argv[:1])
+    if app.platformName() != "xcb":
+        raise RuntimeError("The overlay requires an X11 session (Qt xcb platform)")
     mem = DeadlockMemory()
-    esp = ESP(mem)
-    esp.run()
+    try:
+        ESP(mem).run()
+    finally:
+        mem.pm.close()
 
 
 if __name__ == "__main__":

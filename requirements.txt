@@ -1,6 +1,5 @@
 psutil>=5.9
-pymem>=1.0
-pygame>=2.0
-pywin32>=306
+python-xlib>=0.33
+PyQt5>=5.15
 requests>=2.0
 numpy>=1.21.0

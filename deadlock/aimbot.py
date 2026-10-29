@@ -7,8 +7,7 @@ The logic here aims to be straightforward and easy to maintain.  The
 memory via :class:`deadlock.memory.DeadlockMemory` and adjusts the
 player camera toward enemy targets.
 
-This module is intentionally platform specific (Windows only) as it
-relies on ``win32api`` to query mouse button state.
+Global input is provided by X11.
 """
 
 from dataclasses import dataclass
@@ -16,23 +15,13 @@ import random
 import time
 import logging
 import argparse
-import ctypes
 
-import win32api
-import win32con
-
-try:
-    from .heroes import get_body_bone_index, get_head_bone_index
-    from .helpers import calculate_camera_rotation, calculate_new_camera_angles
-    from .memory import DeadlockMemory
-    from . import mem_offsets as mo
-    from .update_checker import ensure_up_to_date
-except ImportError:
-    # Fallback for when running directly
-    from heroes import get_body_bone_index, get_head_bone_index
-    from helpers import calculate_camera_rotation, calculate_new_camera_angles
-    from memory import DeadlockMemory
-    import mem_offsets as mo
+from .linux_input import X11Input
+from .heroes import get_body_bone_index, get_head_bone_index
+from .helpers import calculate_camera_rotation, calculate_new_camera_angles
+from .memory import DeadlockMemory
+from . import mem_offsets as mo
+from .update_checker import ensure_up_to_date
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +86,7 @@ class Aimbot:
         """Create a new aimbot bound to ``mem``."""
 
         self.mem = mem
+        self.input = X11Input()
         self.settings = settings or AimbotSettings()
         self.locked_on: int | None = None
         self.force_aim_until: float = 0.0
@@ -121,15 +111,15 @@ class Aimbot:
         """Extend ``force_aim_until`` when ability keys are pressed."""
         now = time.time()
         if hero.name == "GreyTalon" and self.settings.grey_talon_lock_enabled and self.settings.grey_talon_lock > 0:
-            if win32api.GetKeyState(self.settings.grey_talon_key) < 0:
+            if self.input.key_down(self.settings.grey_talon_key):
                 self.force_aim_until = max(self.force_aim_until, now + self.settings.grey_talon_lock)
                 logger.debug("Grey Talon ability lock triggered; holding until %.2f", self.force_aim_until)        
         elif hero.name == "Yamato" and self.settings.yamato_lock_enabled and self.settings.yamato_lock > 0:
-            if win32api.GetKeyState(self.settings.yamato_key) < 0:
+            if self.input.key_down(self.settings.yamato_key):
                 self.force_aim_until = max(self.force_aim_until, now + self.settings.yamato_lock)
                 logger.debug("Yamato ability lock triggered; holding until %.2f", self.force_aim_until)
         elif hero.name == "Vindicta" and self.settings.vindicta_lock_enabled and self.settings.vindicta_lock > 0:
-            if win32api.GetKeyState(self.settings.vindicta_key) < 0:
+            if self.input.key_down(self.settings.vindicta_key):
                 self.force_aim_until = max(self.force_aim_until, now + self.settings.vindicta_lock)
                 logger.debug("Vindicta ability lock triggered; holding until %.2f", self.force_aim_until)
         elif hero.name == "Paradox" and self.settings.paradox_shortcut_enabled:
@@ -137,7 +127,7 @@ class Aimbot:
 
     def _handle_paradox_shortcut(self, now: float) -> None:
         """Trigger Paradox ``E`` after ``R`` is pressed."""
-        if win32api.GetKeyState(self.settings.paradox_r_key) < 0:
+        if self.input.key_down(self.settings.paradox_r_key):
             if not self._paradox_r_held:
                 self._paradox_r_held = True
                 self._paradox_next_e = now + 0.05
@@ -145,10 +135,7 @@ class Aimbot:
             self._paradox_r_held = False
 
         if self._paradox_next_e and now >= self._paradox_next_e:
-            win32api.keybd_event(self.settings.paradox_e_key, 0, 0, 0)
-            win32api.keybd_event(
-                self.settings.paradox_e_key, 0, win32con.KEYEVENTF_KEYUP, 0
-            )
+            self.input.tap_key(self.settings.paradox_e_key)
             logger.debug("Paradox shortcut triggered")
             self._paradox_next_e = 0.0
 
@@ -187,154 +174,164 @@ class Aimbot:
         """Main aimbot loop."""
 
         logger.info("Aimbot loop started - hold the left mouse button to aim")
-        active = win32api.GetKeyState(0x01) < 0 or time.time() < self.force_aim_until
         log_state_changes = False
         prev_locked = None
         hold_down_left_click = False
-        while not self.stop_requested:
-            try:
-                # Check if paused
-                if self.paused:
-                    time.sleep(0.1)
-                    continue
-
-                my_data = self.mem.read_entity(0)
-                self._update_ability_lock(my_data["hero"])
-                my_aim_angle = my_data["aim_angle"]
-
-                if not hold_down_left_click and win32api.GetKeyState(0x02) < 0:
-                    hold_down_left_click = True
-                    ctypes.windll.user32.mouse_event(2, 0, 0, 0, 0)
-
-                if hold_down_left_click and win32api.GetKeyState(0x02) >= 0:
-                    hold_down_left_click = False
-                    ctypes.windll.user32.mouse_event(4, 0, 0, 0, 0)
-
-                if hold_down_left_click:
-                    time.sleep(0.01)
-                    continue
-
-                mouse_down = win32api.GetKeyState(0x01) < 0 or time.time() < self.force_aim_until
-                if not log_state_changes and not mouse_down:
-                    log_state_changes = True
-                    active = False
-                elif mouse_down != active:
-                    active = mouse_down
-                    if log_state_changes:
-                        logger.info("Aimbot turned %s", "on" if active else "off")
-                if not mouse_down:
-                    # Left mouse button is not held and no ability lock active
-                    if self.locked_on is not None:
-                        self._last_lock_lost = time.time()
-                    self.locked_on = None
-                    time.sleep(0.01)
-                    continue
-
-                cam_pos = self.mem.camera_position()
-                current_yaw, current_pitch = self.mem.current_angles()
-
-                if self.locked_on is None:
-                    target_idx = None
-                    best_score = None
-                    for i in range(1, 16):
-                        try:
-                            data = self.mem.read_entity(i)
-                        except Exception:
-                            continue
-                        if data["team"] == my_data["team"] or data["health"] <= 0:
-                            continue
-                        if self.settings.target_select_type == "distance":
-                            dx = my_data["position"][0] - data["position"][0]
-                            dy = my_data["position"][1] - data["position"][1]
-                            dz = my_data["position"][2] - data["position"][2]
-                            dist = (dx * dx + dy * dy + dz * dz) ** 0.5
-                            if best_score is None or dist < best_score:
-                                best_score = dist
-                                target_idx = i
-                        else:
-                            yaw, pitch = calculate_camera_rotation(cam_pos, data["position"])
-                            dyaw = min(
-                                abs(yaw - current_yaw),
-                                abs(yaw - current_yaw + 360),
-                                abs(yaw - current_yaw - 360),
-                            )
-                            dpitch = min(
-                                abs(-pitch - current_pitch),
-                                abs(-pitch - current_pitch + 360),
-                                abs(-pitch - current_pitch - 360),
-                            )
-                            score = dyaw + dpitch
-                            if best_score is None or score < best_score:
-                                best_score = score
-                                target_idx = i
-                    self.locked_on = target_idx
-                    if self.locked_on is not None:
-                        if time.time() - self._last_lock_lost > 2:
-                            self._force_head_until = (
-                                time.time() + self._headshot_cache_interval
-                            )
-                        logger.debug("Locked on to entity %d", self.locked_on)
-
-                if prev_locked != self.locked_on:
-                    if self.locked_on is None:
-                        if prev_locked is not None:
-                            logger.debug("Lost target")
-                    else:
-                        if prev_locked is not None:
-                            logger.debug(
-                                "Changed target from %d to %d", prev_locked, self.locked_on
-                            )
-                    prev_locked = self.locked_on
-
-                if self.locked_on is None:
-                    time.sleep(0.01)
-                    continue
-
+        try:
+            active = self.input.button_down(1) or time.time() < self.force_aim_until
+            while not self.stop_requested:
                 try:
-                    target = self.mem.read_entity(self.locked_on)
-                except Exception:
-                    logger.debug(
-                        "Failed to read entity %s; losing target", self.locked_on
-                    )
-                    if self.locked_on is not None:
-                        self._last_lock_lost = time.time()
-                    self.locked_on = None
-                    continue
+                    # Check if paused
+                    if self.paused:
+                        if hold_down_left_click:
+                            self.input.button_event(1, False)
+                            hold_down_left_click = False
+                        time.sleep(0.1)
+                        continue
 
-                bone_index = (
-                    get_head_bone_index(target["hero"])
-                    if self.should_aim_for_head()
-                    else get_body_bone_index(target["hero"])
-                )
-                if bone_index is not None:
-                    bone_array = self.mem.read_longlong(
-                        target["node"] + mo.BONE_ARRAY
-                    )
-                    head_vector = (
-                        self.mem.read_float(bone_array + bone_index * mo.BONE_STEP),
-                        self.mem.read_float(bone_array + bone_index * mo.BONE_STEP + 4),
-                        self.mem.read_float(bone_array + bone_index * mo.BONE_STEP + 8),
-                    )
-                    target_pos = head_vector
-                else:
-                    target_pos = target["position"]
+                    if not hold_down_left_click and self.input.button_down(3):
+                        hold_down_left_click = True
+                        self.input.button_event(1, True)
 
-                # Gradually rotate the camera towards the desired angles for a
-                # slightly more human-like movement.
-                yaw, pitch = calculate_camera_rotation(cam_pos, target_pos)
-                new_yaw, new_pitch = calculate_new_camera_angles(
-                    current_yaw,
-                    current_pitch,
-                    yaw,
-                    -pitch,
-                    self.settings.smooth_speed,
-                )
-                self.mem.set_angles(new_yaw, new_pitch, my_aim_angle)
-                time.sleep(0.001)
-            except Exception as exc:
-                logger.exception("Aimbot loop error: %s", exc)
-                time.sleep(0.01)
+                    if hold_down_left_click and not self.input.button_down(3):
+                        hold_down_left_click = False
+                        self.input.button_event(1, False)
+
+                    if hold_down_left_click:
+                        time.sleep(0.01)
+                        continue
+
+                    my_data = self.mem.read_entity(0)
+                    self._update_ability_lock(my_data["hero"])
+                    my_aim_angle = my_data["aim_angle"]
+
+                    mouse_down = self.input.button_down(1) or time.time() < self.force_aim_until
+                    if not log_state_changes and not mouse_down:
+                        log_state_changes = True
+                        active = False
+                    elif mouse_down != active:
+                        active = mouse_down
+                        if log_state_changes:
+                            logger.info("Aimbot turned %s", "on" if active else "off")
+                    if not mouse_down:
+                        # Left mouse button is not held and no ability lock active
+                        if self.locked_on is not None:
+                            self._last_lock_lost = time.time()
+                        self.locked_on = None
+                        time.sleep(0.01)
+                        continue
+
+                    cam_pos = self.mem.camera_position()
+                    current_yaw, current_pitch = self.mem.current_angles()
+
+                    if self.locked_on is None:
+                        target_idx = None
+                        best_score = None
+                        for i in range(1, 16):
+                            try:
+                                data = self.mem.read_entity(i)
+                            except Exception:
+                                continue
+                            if data["team"] == my_data["team"] or data["health"] <= 0:
+                                continue
+                            if self.settings.target_select_type == "distance":
+                                dx = my_data["position"][0] - data["position"][0]
+                                dy = my_data["position"][1] - data["position"][1]
+                                dz = my_data["position"][2] - data["position"][2]
+                                dist = (dx * dx + dy * dy + dz * dz) ** 0.5
+                                if best_score is None or dist < best_score:
+                                    best_score = dist
+                                    target_idx = i
+                            else:
+                                yaw, pitch = calculate_camera_rotation(cam_pos, data["position"])
+                                dyaw = min(
+                                    abs(yaw - current_yaw),
+                                    abs(yaw - current_yaw + 360),
+                                    abs(yaw - current_yaw - 360),
+                                )
+                                dpitch = min(
+                                    abs(-pitch - current_pitch),
+                                    abs(-pitch - current_pitch + 360),
+                                    abs(-pitch - current_pitch - 360),
+                                )
+                                score = dyaw + dpitch
+                                if best_score is None or score < best_score:
+                                    best_score = score
+                                    target_idx = i
+                        self.locked_on = target_idx
+                        if self.locked_on is not None:
+                            if time.time() - self._last_lock_lost > 2:
+                                self._force_head_until = (
+                                    time.time() + self._headshot_cache_interval
+                                )
+                            logger.debug("Locked on to entity %d", self.locked_on)
+
+                    if prev_locked != self.locked_on:
+                        if self.locked_on is None:
+                            if prev_locked is not None:
+                                logger.debug("Lost target")
+                        else:
+                            if prev_locked is not None:
+                                logger.debug(
+                                    "Changed target from %d to %d", prev_locked, self.locked_on
+                                )
+                        prev_locked = self.locked_on
+
+                    if self.locked_on is None:
+                        time.sleep(0.01)
+                        continue
+
+                    try:
+                        target = self.mem.read_entity(self.locked_on)
+                    except Exception:
+                        logger.debug(
+                            "Failed to read entity %s; losing target", self.locked_on
+                        )
+                        if self.locked_on is not None:
+                            self._last_lock_lost = time.time()
+                        self.locked_on = None
+                        continue
+
+                    bone_index = (
+                        get_head_bone_index(target["hero"])
+                        if self.should_aim_for_head()
+                        else get_body_bone_index(target["hero"])
+                    )
+                    if bone_index is not None:
+                        bone_array = self.mem.read_longlong(
+                            target["node"] + mo.BONE_ARRAY
+                        )
+                        head_vector = (
+                            self.mem.read_float(bone_array + bone_index * mo.BONE_STEP),
+                            self.mem.read_float(bone_array + bone_index * mo.BONE_STEP + 4),
+                            self.mem.read_float(bone_array + bone_index * mo.BONE_STEP + 8),
+                        )
+                        target_pos = head_vector
+                    else:
+                        target_pos = target["position"]
+
+                    # Gradually rotate the camera towards the desired angles for a
+                    # slightly more human-like movement.
+                    yaw, pitch = calculate_camera_rotation(cam_pos, target_pos)
+                    new_yaw, new_pitch = calculate_new_camera_angles(
+                        current_yaw,
+                        current_pitch,
+                        yaw,
+                        -pitch,
+                        self.settings.smooth_speed,
+                    )
+                    self.mem.set_angles(new_yaw, new_pitch, my_aim_angle)
+                    time.sleep(0.001)
+                except Exception as exc:
+                    logger.exception("Aimbot loop error: %s", exc)
+                    time.sleep(0.01)
             
+        finally:
+            try:
+                if hold_down_left_click:
+                    self.input.button_event(1, False)
+            finally:
+                self.input.close()
         logger.info("Aimbot loop ended")
 
 
@@ -362,8 +359,11 @@ def main(argv: list[str] | None = None) -> None:
     )
     ensure_up_to_date()
     mem = DeadlockMemory()
-    bot = Aimbot(mem)
-    bot.run()
+    try:
+        bot = Aimbot(mem)
+        bot.run()
+    finally:
+        mem.pm.close()
 
 
 if __name__ == "__main__":
