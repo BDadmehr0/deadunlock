@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#-i https://pypi.tuna.tsinghua.edu.cn/simple!/usr/bin/env bash
 # Install the Arch Linux system prerequisites and the project's Python dependencies.
 set -euo pipefail
 
@@ -71,7 +71,7 @@ elif [[ ! -x "$project_dir/.venv/bin/python" ]]; then
     exit 1
 fi
 
-"$project_dir/.venv/bin/python" -m pip install -r "$project_dir/requirements.txt"
+"$project_dir/.venv/bin/python" -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r "$project_dir/requirements.txt"
 printf '\nSetup complete. Start Deadlock through Proton in an X11 session, then run:\n'
 printf '  cd %q\n  . .venv/bin/activate\n  python -m deadlock.aimbot_gui\n' "$project_dir"
 printf '\nSee docs/arch-linux-fa.md for permissions, ESP, and troubleshooting.\n'
