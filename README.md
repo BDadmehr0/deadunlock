@@ -27,6 +27,17 @@ lack permission to inspect or modify a process.
   Processes must normally run as the same user, be dumpable, and pass Linux
   ptrace/LSM checks. The port does not bypass game security mechanisms.
 
+### Arch Linux
+
+For Arch Linux, run `./scripts/setup-arch.sh` as a normal user. It uses
+`sudo pacman -Syu --needed` (a full system upgrade with confirmation), creates
+or reuses `.venv`, and installs the Python requirements. Steam and Proton must
+be installed separately. The script does not change ptrace settings. Use
+`--skip-system` to skip pacman. See the [Persian Arch guide](docs/arch-linux-fa.md)
+for manual installation, execution, permissions, and troubleshooting.
+
+### Debian / Ubuntu
+
 On Debian/Ubuntu, install Python's venv and Tk support and Qt/X11 runtime
 libraries (other distributions use different package names):
 
