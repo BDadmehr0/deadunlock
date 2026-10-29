@@ -10,7 +10,8 @@ CAMERA_PITCH = 0x44   # camera base -> pitch
 CAMERA_ROLL = 0x4C    # camera base -> roll (unused)
 
 # Entity offsets
-HERO_ID_OFFSET = 0x8b8 + 0x1C  # m_PlayerDataGlobal -> m_heroID
+# Observed with Wraith (ID 7) on one Proton build; other builds may differ.
+HERO_ID_OFFSET = 0x908 + 0x1C  # m_PlayerDataGlobal -> m_nHeroID
 GAME_SCENE_NODE = 0x330  # pawn -> CGameSceneNode pointer
 NODE_POSITION = 0xD0     # CGameSceneNode -> position vector
 TEAM_OFFSET = 0x3F3      # controller -> team id

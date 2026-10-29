@@ -11,6 +11,7 @@ from Xlib import X
 
 from deadlock.linux_input import X11Input
 from deadlock.linux_process import LinuxProcess, Mapping, find_process
+from deadlock.memory import DeadlockMemory, Offsets
 from offset_finder import Signature, find_offsets
 
 
@@ -87,7 +88,8 @@ class SignatureTests(unittest.TestCase):
         header_size = 0x1000
         images = {}
         maps = []
-        for base, module in ((0x10000, "client.dll"), (0x30000, "schemasystem.dll")):
+        # No schemasystem mapping: the unused schema signature is not required.
+        for base, module in ((0x10000, "client.dll"),):
             image = bytearray(0x4000)
             image[:2] = b"MZ"
             struct.pack_into("<I", image, 0x3c, 0x80)
@@ -123,11 +125,29 @@ class SignatureTests(unittest.TestCase):
         self.assertEqual([(r.start, r.end) for r in regions], [(0x10000, 0x12000)])
         patterns = {name: ("48 8B 1D ? ? ? ?", 3, 7) for name in (
             "local_player_controller", "view_matrix", "entity_list",
-            "camera_manager", "schema_system_interface")}
+            "camera_manager")}
         with patch("offset_finder.SIGNATURES", patterns):
             offsets = find_offsets(process=process)
         self.assertEqual(offsets["entity_list"], header_size - 2 + 10 + 7)
-        self.assertEqual(offsets["schema_system_interface"], header_size - 2 + 10 + 7)
+        self.assertNotIn("schema_system_interface", offsets)
+        self.assertIsNone(Offsets(**offsets).schema_system_interface)
+
+    def test_deadlock_memory_initializes_without_schema(self):
+        offsets = {
+            "local_player_controller": 1,
+            "view_matrix": 2,
+            "entity_list": 3,
+            "camera_manager": 4,
+        }
+        process = SimpleNamespace(module_base=lambda module: 0x1000)
+        with patch("deadlock.memory.find_process", return_value=123), \
+             patch("deadlock.memory.LinuxProcess", return_value=process), \
+             patch("offset_finder.find_offsets", return_value=offsets):
+            memory = DeadlockMemory()
+        self.assertEqual(memory.client_base, 0x1000)
+        self.assertIsNone(memory.offsets.schema_system_interface)
+        self.assertEqual(memory.offsets.entity_list, 3)
+        self.assertEqual(Offsets(1, 2, 3, 4, 5).schema_system_interface, 5)
 
     def test_reject_invalid_pe_size(self):
         process = LinuxProcess.__new__(LinuxProcess)
@@ -162,7 +182,7 @@ class SignatureTests(unittest.TestCase):
         data[boundary - 2:boundary + 5] = b'\x48\x8b\x1d' + struct.pack('<i', 10)
         patterns = {name: ('48 8B 1D ? ? ? ?', 3, 7) for name in (
             'local_player_controller', 'view_matrix', 'entity_list',
-            'camera_manager', 'schema_system_interface')}
+            'camera_manager')}
 
         class FakeProcess:
             def module_image(self, module):
@@ -239,8 +259,9 @@ class AimbotCleanupTests(unittest.TestCase):
                 self.events.append('closed')
 
         device = Input()
+        memory = SimpleNamespace(read_entity=lambda index: {"hero": None, "aim_angle": 0.0})
         with patch('deadlock.aimbot.X11Input', return_value=device):
-            bot = Aimbot(None)
+            bot = Aimbot(memory)
         with self.assertRaises(KeyboardInterrupt):
             bot.run()
         self.assertEqual(device.events, [(1, True), (1, False), 'closed'])

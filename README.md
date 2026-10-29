@@ -93,10 +93,11 @@ DEADUNLOCK_PID=12345 python -m deadlock.aimbot_gui
 
 Replace `12345` with the real game PID, not Steam's `reaper` or another launcher.
 For example, inspect `ps -u "$USER" -o pid,comm,args` and, when permitted, check
-`/proc/<pid>/maps` for the two DLLs below. The process must have file-backed
-`client.dll` and `schemasystem.dll` mappings visible in `/proc/<pid>/maps`.
-The scanner validates the in-memory PE headers and scans readable file-backed
-and anonymous mappings within each module's declared image size. This is an
+`/proc/<pid>/maps` for `client.dll`. The process must have a file-backed
+`client.dll` header mapping visible there. The scanner validates the in-memory
+PE header and scans readable file-backed and anonymous mappings within the
+module's declared image size. `schemasystem.dll` is not required by the current
+runtime and its legacy signature is not scanned. This is an
 experimental approximation of Proton's layout, and fails if signatures are
 missing. PE mapping layouts and game updates may require different signatures
 or module base calculations. Hardcoded entity and camera offsets can also become stale.
@@ -104,6 +105,13 @@ Inspect and update `signature_patterns.py` and `deadlock/mem_offsets.py` for
 the specific game version before relying on any results. A match alone does
 not establish that an offset is correct; an incorrect write can corrupt the
 game process.
+
+If the local player reports an unknown hero ID (including `0`) or a null
+pointer, the aimbot stops aiming and waits without repeatedly logging a
+traceback. Enter a match with a selected hero and retry. If the warning
+persists, the game version, process selection, signatures, or hardcoded offsets
+may be incompatible. Do not treat a known hero ID or a signature match as
+proof that memory addresses are safe to write.
 
 The GUI may offer to open the project's release page when an update is
 available. The command-line aimbot checks for updates at startup and exits if

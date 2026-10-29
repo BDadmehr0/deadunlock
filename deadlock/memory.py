@@ -20,7 +20,13 @@ class Offsets:
     view_matrix: int
     entity_list: int
     camera_manager: int
-    schema_system_interface: int
+    # Kept for callers that construct Offsets with the legacy fifth value.
+    # The current runtime does not resolve or use this offset.
+    schema_system_interface: int | None = None
+
+
+class EntityUnavailable(ValueError):
+    """Player data is incomplete or incompatible with the current game version."""
 
 
 class DeadlockMemory:
@@ -101,21 +107,45 @@ class DeadlockMemory:
         """Return controller and pawn addresses for entity ``index``."""
 
         entity_list = self.entity_list
-        address_base = self.read_longlong(entity_list + 0x8 * ((index & 0x7FFF) >> 0x9) + 0x10)
-        controller_base = self.read_longlong(address_base + 120 * (index & 0x1FF))
+        if not entity_list:
+            raise EntityUnavailable("Entity list pointer is null")
         if index == 0:
             controller_base = self.local_controller
-        pawn_handle = self.read_longlong(controller_base + 0x874) # C_BasePlayerController -> m_hPawn
-        list_entry = self.read_longlong(entity_list + 0x8 * ((pawn_handle & 0x7FFF) >> 0x9) + 0x10)
+        else:
+            address_base = self.read_longlong(
+                entity_list + 0x8 * ((index & 0x7FFF) >> 0x9) + 0x10
+            )
+            if not address_base:
+                raise EntityUnavailable(f"Entity list entry for player {index} is null")
+            controller_base = self.read_longlong(address_base + 120 * (index & 0x1FF))
+        if not controller_base:
+            raise EntityUnavailable(f"Controller pointer for player {index} is null")
+        pawn_handle = self.read_longlong(controller_base + 0x874)  # m_hPawn
+        list_entry = self.read_longlong(
+            entity_list + 0x8 * ((pawn_handle & 0x7FFF) >> 0x9) + 0x10
+        )
+        if not list_entry:
+            raise EntityUnavailable(f"Pawn list entry for player {index} is null")
         pawn = self.read_longlong(list_entry + 0x78 * (pawn_handle & 0x1FF))
+        if not pawn:
+            raise EntityUnavailable(f"Pawn pointer for player {index} is null")
         return controller_base, pawn
 
     def read_entity(self, index: int) -> Dict:
         """Return a dict describing the entity at ``index``."""
 
         controller_base, pawn = self.get_entity_base(index)
-        hero_id = HeroIds(self.read_int(controller_base + mo.HERO_ID_OFFSET))
+        raw_hero_id = self.read_int(controller_base + mo.HERO_ID_OFFSET)
+        try:
+            hero_id = HeroIds(raw_hero_id)
+        except ValueError as exc:
+            raise EntityUnavailable(
+                f"Unknown hero ID {raw_hero_id} for player {index}; "
+                "the player may not be ready or the game offsets may be outdated"
+            ) from exc
         game_scene_node = self.read_longlong(pawn + mo.GAME_SCENE_NODE)
+        if not game_scene_node:
+            raise EntityUnavailable(f"Scene node pointer for player {index} is null")
         pos_addr = game_scene_node + mo.NODE_POSITION
         pos = (
             self.read_float(pos_addr),

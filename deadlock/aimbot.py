@@ -19,7 +19,7 @@ import argparse
 from .linux_input import X11Input
 from .heroes import get_body_bone_index, get_head_bone_index
 from .helpers import calculate_camera_rotation, calculate_new_camera_angles
-from .memory import DeadlockMemory
+from .memory import DeadlockMemory, EntityUnavailable
 from . import mem_offsets as mo
 from .update_checker import ensure_up_to_date
 
@@ -177,6 +177,7 @@ class Aimbot:
         log_state_changes = False
         prev_locked = None
         hold_down_left_click = False
+        waiting_for_local_player = False
         try:
             active = self.input.button_down(1) or time.time() < self.force_aim_until
             while not self.stop_requested:
@@ -188,6 +189,33 @@ class Aimbot:
                             hold_down_left_click = False
                         time.sleep(0.1)
                         continue
+
+                    try:
+                        my_data = self.mem.read_entity(0)
+                    except (EntityUnavailable, OSError) as exc:
+                        # Never aim or keep synthetic input held with invalid local data.
+                        if hold_down_left_click:
+                            self.input.button_event(1, False)
+                            hold_down_left_click = False
+                        if self.locked_on is not None:
+                            self._last_lock_lost = time.time()
+                        self.locked_on = None
+                        prev_locked = None
+                        self.force_aim_until = 0.0
+                        self._force_head_until = 0.0
+                        self._paradox_next_e = 0.0
+                        self._paradox_r_held = False
+                        if not waiting_for_local_player:
+                            logger.warning(
+                                "Local player unavailable: %s. Aiming disabled; "
+                                "waiting for a valid player. Enter a match or check offsets.", exc
+                            )
+                            waiting_for_local_player = True
+                        time.sleep(0.5)
+                        continue
+                    if waiting_for_local_player:
+                        logger.info("Local player data is available again")
+                        waiting_for_local_player = False
 
                     if not hold_down_left_click and self.input.button_down(3):
                         hold_down_left_click = True
@@ -201,7 +229,6 @@ class Aimbot:
                         time.sleep(0.01)
                         continue
 
-                    my_data = self.mem.read_entity(0)
                     self._update_ability_lock(my_data["hero"])
                     my_aim_angle = my_data["aim_angle"]
 

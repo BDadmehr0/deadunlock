@@ -22,6 +22,7 @@ SIGNATURES = {
         3,
         7,
     ),
+    # Legacy reference only; the runtime no longer scans this unused signature.
     "schema_system_interface": (
         "48 89 05 ? ? ? ? 4C 8D 0D ? ? ? ? 0F B6 45 E8 4C 8D 45 E0 33 F6",
         3,
