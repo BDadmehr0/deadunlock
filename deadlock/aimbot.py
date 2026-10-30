@@ -18,7 +18,8 @@ import math
 import argparse
 
 from .linux_input import X11Input
-from .heroes import HeroIds, get_body_bone_index, get_head_bone_index
+from .heroes import HeroIds
+from .skeleton import SkeletonReader, SkeletonUnavailable
 from .helpers import calculate_camera_rotation, calculate_new_camera_angles
 from .memory import DeadlockMemory, EntityUnavailable
 from . import mem_offsets as mo
@@ -135,6 +136,7 @@ class Aimbot:
         """Create a new aimbot bound to ``mem``."""
 
         self.mem = mem
+        self.skeleton = SkeletonReader(mem)
         self.settings = settings or AimbotSettings()
         button = self.settings.aim_button
         if isinstance(button, bool) or not isinstance(button, int) or button not in (8, 9):
@@ -161,6 +163,8 @@ class Aimbot:
 
         self._last_lock_lost: float = 0.0
         self._last_bad_bone_warning: float = float("-inf")
+        self._skeleton_retry: dict[tuple[int, str], tuple[float, str]] = {}
+        self._reported_bones: set[tuple[int, str]] = set()
 
         # Paradox shortcut state
         self._paradox_next_e: float = 0.0
@@ -211,7 +215,8 @@ class Aimbot:
         return self._zone_cache
 
     def _target_position(
-        self, target: dict, bone_index: int | None, zone: str = "body"
+        self, target: dict, bone_index: int | None, zone: str = "body", *,
+        fallback_reason: str | None = None,
     ) -> tuple[float, float, float]:
         """Use a plausible bone or an unverified height estimate for the chosen zone."""
         centre = target["position"]
@@ -227,7 +232,7 @@ class Aimbot:
         reference = (centre[0], centre[1], centre[2] + anchor_height)
         try:
             if bone_index is None:
-                raise ValueError(f"no {zone} bone index")
+                raise ValueError(fallback_reason or f"no {zone} bone index")
             bone_array = self.mem.read_longlong(target["node"] + mo.BONE_ARRAY)
             if not bone_array:
                 raise ValueError("null bone array")
@@ -248,6 +253,35 @@ class Aimbot:
                 )
                 self._last_bad_bone_warning = now
             return fallback
+
+    def _automatic_target_position(self, target: dict, zone: str) -> tuple[float, float, float]:
+        """Use the target model's named bones, or the existing approximate fallback."""
+        key = (target.get("node"), zone)
+        now = time.monotonic()
+        retry = self._skeleton_retry.get(key)
+        if retry and now < retry[0]:
+            return self._target_position(target, None, zone, fallback_reason=retry[1])
+        try:
+            snapshot = self.skeleton.read(target, zone)
+        except SkeletonUnavailable as exc:
+            if len(self._skeleton_retry) >= 64:
+                self._skeleton_retry.clear()
+            self._skeleton_retry[key] = (now + 1.0, str(exc))
+            return self._target_position(target, None, zone, fallback_reason=str(exc))
+        self._skeleton_retry.pop(key, None)
+        resolved = (snapshot.model, snapshot.selected_name)
+        if resolved not in self._reported_bones:
+            if len(self._reported_bones) >= 64:
+                self._reported_bones.clear()
+            self._reported_bones.add(resolved)
+            logger.info("Experimental skeleton: %s %s uses %s[%d] in model %#x",
+                        getattr(target.get("hero"), "name", "unknown"), zone,
+                        snapshot.selected_name, snapshot.indices[snapshot.selected_name],
+                        snapshot.model)
+        x, y, z = snapshot.positions["selected"]
+        if zone == "head":
+            z += self.settings.head_vertical_offset
+        return x, y, z
 
     def pause(self) -> None:
         """Pause the aimbot."""
@@ -438,13 +472,7 @@ class Aimbot:
                         continue
 
                     zone = self._select_zone()
-                    bone_index = {
-                        "head": get_head_bone_index,
-                        "body": get_body_bone_index,
-                        # No verified leg indices are available yet.
-                        "legs": lambda _hero: None,
-                    }[zone](target["hero"])
-                    target_pos = self._target_position(target, bone_index, zone)
+                    target_pos = self._automatic_target_position(target, zone)
 
                     # Gradually rotate the camera towards the desired angles for a
                     # slightly more human-like movement.
