@@ -1,4 +1,4 @@
-#-i https://pypi.tuna.tsinghua.edu.cn/simple!/usr/bin/env bash
+#!/usr/bin/env bash
 # Install the Arch Linux system prerequisites and the project's Python dependencies.
 set -euo pipefail
 
@@ -51,8 +51,9 @@ if ! $skip_system; then
     fi
     echo "Installing prerequisites and updating the system with pacman."
     sudo pacman -Syu --needed \
-        python tk libglvnd libxcb libxkbcommon-x11 \
-        xcb-util-image xcb-util-keysyms xcb-util-renderutil xcb-util-wm
+        python tk libglvnd libx11 libxi libxtst libxcb libxkbcommon-x11 \
+        xcb-util-cursor xcb-util-image xcb-util-keysyms xcb-util-renderutil \
+        xcb-util-wm xorg-xev
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
@@ -71,7 +72,7 @@ elif [[ ! -x "$project_dir/.venv/bin/python" ]]; then
     exit 1
 fi
 
-"$project_dir/.venv/bin/python" -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r "$project_dir/requirements.txt"
+"$project_dir/.venv/bin/python" -m pip install -r "$project_dir/requirements.txt"
 printf '\nSetup complete. Start Deadlock through Proton in an X11 session, then run:\n'
-printf '  cd %q\n  . .venv/bin/activate\n  python -m deadlock.aimbot_gui\n' "$project_dir"
+printf '  cd %q\n  .venv/bin/python -m deadlock\n' "$project_dir"
 printf '\nSee docs/arch-linux-fa.md for permissions, ESP, and troubleshooting.\n'

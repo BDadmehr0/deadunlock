@@ -9,7 +9,7 @@
 - یک سیستم Arch Linux به‌روز، دسترسی اینترنت، و Python نسخهٔ 3.11 یا جدیدتر.
 - Steam و Deadlock با Proton، که باید جداگانه نصب و در Steam تنظیم شوند.
   نصب Steam روی Arch ممکن است به فعال‌سازی مخزن `multilib` نیاز داشته باشد.
-- نشست X11 و افزونهٔ XTEST؛ Xwayland در نشست Wayland برای ورودی سراسری
+- نشست X11 و افزونه‌های XTEST و XInput2؛ Xwayland در نشست Wayland برای ورودی سراسری
   پنجره‌های Wayland پشتیبانی نمی‌شود. مقدار `echo "$XDG_SESSION_TYPE"` را بررسی کنید.
 - برای ESP، یک compositor فعال و بازی در حالت borderless/windowed روی مانیتور
   اصلی با اندازهٔ تمام صفحه. overlay جای پنجره را دنبال نمی‌کند و ممکن است در
@@ -20,7 +20,7 @@
 داخل پوشهٔ پروژه، به‌عنوان کاربر معمولی (نه root) اجرا کنید:
 
 ```bash
-./scripts/setup-arch.sh
+./scripts/setup-linux.sh
 ```
 
 اسکریپت برای نصب پیش‌نیازهای سیستمی `sudo pacman -Syu --needed` را اجرا می‌کند؛
@@ -30,18 +30,19 @@
 نمی‌دهد. در صورت نصب بودن همهٔ بسته‌های سیستمی می‌توانید مرحلهٔ pacman را رد کنید:
 
 ```bash
-./scripts/setup-arch.sh --skip-system
+./scripts/setup-linux.sh --skip-system
 ```
 
-برای دیدن گزینه‌ها `./scripts/setup-arch.sh --help` را اجرا کنید. اگر محیط
+برای دیدن گزینه‌ها `./scripts/setup-linux.sh --help` را اجرا کنید. اگر محیط
 `.venv` ناقص یا به Python قدیمی وابسته است، پس از اطمینان از نداشتن اطلاعات
 موردنیاز در آن، پوشه را پاک کنید و اسکریپت را دوباره اجرا کنید.
 
 ## نصب دستی
 
 ```bash
-sudo pacman -Syu --needed python tk libglvnd libxcb libxkbcommon-x11 \
-  xcb-util-image xcb-util-keysyms xcb-util-renderutil xcb-util-wm
+sudo pacman -Syu --needed python tk libglvnd libx11 libxi libxtst libxcb \
+  libxkbcommon-x11 xcb-util-cursor xcb-util-image xcb-util-keysyms \
+  xcb-util-renderutil xcb-util-wm xorg-xev
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r requirements.txt
@@ -58,14 +59,22 @@ python -m pip install -r requirements.txt
 در پنل، با زدن **Start** ایم‌بات و به‌صورت پیش‌فرض ESP شروع می‌شوند؛ برای
 اجرای ایم‌بات بدون overlay، پیش از Start تیک **ESP overlay** را بردارید.
 **Stop** یا بستن پنل، ESP مدیریت‌شده را هم متوقف می‌کند. برای aim دکمهٔ کناری
-Mouse 4 را نگه دارید (معمولاً دکمهٔ شمارهٔ ۸ در X11)؛ کلیک چپ مستقل شلیک می‌کند.
-قفل توانایی‌های فعال‌شده ممکن است بدون نگه‌داشتن Mouse 4 هم aim را فعال نگه دارد.
+در تب Settings گزینهٔ **Aim button** را روی Mouse 4 یا Mouse 5 بگذارید و آن را
+نگه دارید (معمولاً شمارهٔ ۸ یا ۹ در X11)؛ پیش‌فرض Mouse 4 است. کلیک چپ مستقل
+شلیک می‌کند. قفل توانایی‌ها ممکن است بدون نگه‌داشتن دکمه هم aim را فعال نگه دارد.
 این دکمه به XInput2 نیاز دارد و در Wayland/Xwayland ممکن است وضعیت سراسری آن
 دریافت نشود. با ابزار `xev` می‌توانید شمارهٔ دکمهٔ خود را بررسی کنید.
 پیام‌ها و خطاهای ESP
 در تب **Logs** و وضعیت پردازش آن در نوار پایین دیده می‌شوند. اگر ESP متوقف
 شود، ایم‌بات تا زدن Stop به کار ادامه می‌دهد. ESP با یک پردازش جدا و دسترسی
 فقط‌خواندنی به حافظه اجرا می‌شود.
+
+با فعال‌کردن **Live Save** در بالای پنل، تغییرات معتبر به‌صورت خودکار در
+`deadlock/aimbot_settings.json` ذخیره و در اجرای بعدی بازخوانی می‌شوند. مقادیر
+ناقص یا نامعتبر ذخیره نمی‌شوند و وضعیت خطا در تب Settings نمایش داده می‌شود.
+با خاموش‌بودن Live Save نیز هنگام Start یا بستن پنل تنظیمات معتبر ذخیره می‌شوند.
+ذخیره باعث تغییر تنظیمات ایم‌بات در حال اجرا نمی‌شود؛ برای اعمال آنها Stop و
+سپس Start بزنید.
 
 اجرای جداگانه نیز همچنان ممکن است:
 

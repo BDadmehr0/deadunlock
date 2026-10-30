@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import subprocess
+import tempfile
 import time
 import logging
 import queue
@@ -29,18 +30,29 @@ def load_saved_settings() -> AimbotSettings:
     try:
         with open(SETTINGS_FILE, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-        return AimbotSettings(**data)
+        settings = AimbotSettings(**data)
+        if type(settings.aim_button) is not int or settings.aim_button not in (8, 9):
+            settings.aim_button = 8
+        return settings
     except Exception:
         return AimbotSettings()
 
 
 def save_settings(settings: AimbotSettings) -> None:
-    """Persist ``settings`` to :data:`SETTINGS_FILE`."""
+    """Atomically persist settings, leaving the previous JSON intact on failure.
+
+    Raises an exception on write failure so the GUI can report it.
+    """
+    directory = os.path.dirname(os.path.abspath(SETTINGS_FILE))
+    fd, temporary = tempfile.mkstemp(prefix=".aimbot-settings-", suffix=".tmp", dir=directory)
     try:
-        with open(SETTINGS_FILE, "w", encoding="utf-8") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(asdict(settings), fh, indent=2)
-    except Exception as exc:
-        print(f"Failed to save settings: {exc}")
+            fh.write("\n")
+        os.replace(temporary, SETTINGS_FILE)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def get_build_sha() -> str:

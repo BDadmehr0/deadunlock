@@ -13,6 +13,7 @@ import os
 import queue
 import threading
 import tkinter as tk
+from dataclasses import replace
 from tkinter import messagebox, scrolledtext, ttk
 
 from .aimbot import Aimbot, AimbotSettings
@@ -51,6 +52,7 @@ class AimbotApp:
             pass
 
         self.settings = load_saved_settings()
+        self._live_save_job: str | None = None
         self.bot: Aimbot | None = None
         self.bot_thread: threading.Thread | None = None
         self.stop_event = threading.Event()
@@ -89,6 +91,7 @@ class AimbotApp:
         self._build_header()
         self._build_tabs()
         self._build_statusbar()
+        self._setup_live_save()
 
     def _configure_style(self) -> None:
         """Create a clean dark ttk theme with accent buttons and sliders."""
@@ -246,10 +249,16 @@ class AimbotApp:
             width=14,
         )
         self.toggle_button.grid(row=0, column=0, padx=(0, 0))
+        self.live_save_var = tk.BooleanVar(value=self.settings.live_save)
+        ttk.Checkbutton(controls, text="Live Save", variable=self.live_save_var).grid(
+            row=0, column=1, padx=(10, 0)
+        )
         if self.combined:
-            self.esp_enabled = tk.BooleanVar(value=True)
-            self.esp_check = ttk.Checkbutton(controls, text="ESP overlay", variable=self.esp_enabled)
-            self.esp_check.grid(row=0, column=1, padx=(10, 0))
+            self.esp_enabled = tk.BooleanVar(value=self.settings.esp_enabled)
+            self.esp_check = ttk.Checkbutton(
+                controls, text="ESP overlay", variable=self.esp_enabled
+            )
+            self.esp_check.grid(row=0, column=2, padx=(10, 0))
 
     def _build_tabs(self) -> None:
         """Create the main notebook and its tabs."""
@@ -302,6 +311,14 @@ class AimbotApp:
             width=10,
             state="readonly",
         ).grid(row=row, column=1, sticky="w", padx=8)
+        ttk.Label(frame, text="Aim button").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.aim_button_var = tk.StringVar(value=f"Mouse {self.settings.aim_button - 4}")
+        ttk.Combobox(
+            frame, textvariable=self.aim_button_var, values=("Mouse 4", "Mouse 5"),
+            width=10, state="readonly",
+        ).grid(row=1, column=1, sticky="w", padx=8, pady=(6, 0))
+        self.live_save_status = ttk.Label(frame, text="Live Save: off", foreground="#9ca3af")
+        self.live_save_status.grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         # Hero settings
         row += 1
@@ -495,6 +512,11 @@ class AimbotApp:
 
     def _apply_widget_values(self) -> None:
         """Validate and update settings from widget values."""
+        settings = replace(self.settings)
+        aim_buttons = {"Mouse 4": 8, "Mouse 5": 9}
+        if self.aim_button_var.get() not in aim_buttons:
+            raise ValueError("Select Mouse 4 or Mouse 5 as the aim button")
+        settings.aim_button = aim_buttons[self.aim_button_var.get()]
         random_zones = self.random_zones_var.get()
         try:
             head_offset = int(self.head_vertical_var.get())
@@ -514,36 +536,108 @@ class AimbotApp:
                         f"{zone.title()} weight must be an integer from 0 to 100"
                     ) from exc
                 # Invalid inactive edits do not affect random mode or overwrite saved values.
-                value = getattr(self.settings, f"{zone}_weight")
+                value = getattr(settings, f"{zone}_weight")
             weights[zone] = value
         if not random_zones and not any(
             self.zone_enabled_vars[zone].get() and weights[zone] for zone in weights
         ):
             raise ValueError("Select at least one zone with a positive weight")
         for zone, weight in weights.items():
-            setattr(self.settings, f"{zone}_weight", weight)
-            setattr(self.settings, f"{zone}_enabled", self.zone_enabled_vars[zone].get())
-        self.settings.random_zones = random_zones
-        self.settings.head_vertical_offset = head_offset
-        self.settings.target_select_type = self.target_var.get()
+            setattr(settings, f"{zone}_weight", weight)
+            setattr(settings, f"{zone}_enabled", self.zone_enabled_vars[zone].get())
+        settings.random_zones = random_zones
+        settings.head_vertical_offset = head_offset
+        settings.target_select_type = self.target_var.get()
 
-        self.settings.grey_talon_lock_enabled = self.grey_enabled.get()
-        if self.grey_key.get():
-            self.settings.grey_talon_key = ord(self.grey_key.get().upper()[0])
+        settings.live_save = self.live_save_var.get()
+        if self.combined:
+            settings.esp_enabled = self.esp_enabled.get()
 
-        self.settings.yamato_lock_enabled = self.yamato_enabled.get()
-        if self.yamato_key.get():
-            self.settings.yamato_key = ord(self.yamato_key.get().upper()[0])
+        for enabled_name, enabled_var, key_name, key_var in (
+            ("grey_talon_lock_enabled", self.grey_enabled, "grey_talon_key", self.grey_key),
+            ("yamato_lock_enabled", self.yamato_enabled, "yamato_key", self.yamato_key),
+            ("vindicta_lock_enabled", self.vindicta_enabled, "vindicta_key", self.vindicta_key),
+            ("paradox_shortcut_enabled", self.paradox_enabled, "paradox_r_key", self.paradox_r_key),
+            ("paradox_shortcut_enabled", self.paradox_enabled, "paradox_e_key", self.paradox_e_key),
+        ):
+            key = key_var.get().upper()
+            if len(key) != 1 or not key.isascii() or not key.isalnum():
+                raise ValueError("Ability keys must each be a single ASCII letter or digit")
+            setattr(settings, enabled_name, enabled_var.get())
+            setattr(settings, key_name, ord(key))
+        self.settings = settings
 
-        self.settings.vindicta_lock_enabled = self.vindicta_enabled.get()
-        if self.vindicta_key.get():
-            self.settings.vindicta_key = ord(self.vindicta_key.get().upper()[0])
+    def _setup_live_save(self) -> None:
+        """Watch all persisted panel fields after the widgets are initialized."""
+        variables = [
+            self.target_var, self.aim_button_var, self.random_zones_var, self.head_vertical_var,
+            self.grey_enabled, self.grey_key, self.yamato_enabled, self.yamato_key,
+            self.vindicta_enabled, self.vindicta_key, self.paradox_enabled,
+            self.paradox_r_key, self.paradox_e_key,
+            *self.zone_enabled_vars.values(), *self.zone_weight_vars.values(),
+        ]
+        if self.combined:
+            variables.append(self.esp_enabled)
+        for variable in variables:
+            variable.trace_add("write", self._schedule_live_save)
+        self.live_save_var.trace_add("write", self._toggle_live_save)
+        self._set_save_status("Live Save: on" if self.live_save_var.get() else "Live Save: off")
 
-        self.settings.paradox_shortcut_enabled = self.paradox_enabled.get()
-        if self.paradox_r_key.get():
-            self.settings.paradox_r_key = ord(self.paradox_r_key.get().upper()[0])
-        if self.paradox_e_key.get():
-            self.settings.paradox_e_key = ord(self.paradox_e_key.get().upper()[0])
+    def _set_save_status(self, text: str, *, error: bool = False) -> None:
+        """Display whether settings have been saved or require attention."""
+        self.live_save_status.config(text=text, foreground="#ef4444" if error else "#9ca3af")
+
+    def _write_settings(self, settings: AimbotSettings) -> bool:
+        """Save settings and report any failure without blocking the control panel."""
+        try:
+            save_settings(settings)
+        except (OSError, TypeError, ValueError) as exc:
+            self.log_queue.put(f"Settings save failed: {exc}")
+            self._set_save_status("Settings not saved; see Logs", error=True)
+            return False
+        return True
+
+    def _cancel_live_save(self) -> None:
+        """Cancel a pending debounced save."""
+        if self._live_save_job is not None:
+            self.root.after_cancel(self._live_save_job)
+            self._live_save_job = None
+
+    def _schedule_live_save(self, *_args: object) -> None:
+        """Debounce edits so typing does not rewrite the JSON on every keystroke."""
+        if not self.live_save_var.get():
+            return
+        self._cancel_live_save()
+        self._set_save_status("Live Save: pending")
+        self._live_save_job = self.root.after(350, self._save_live_values)
+
+    def _save_live_values(self) -> None:
+        """Save the latest valid panel snapshot, or keep the previous valid JSON."""
+        self._live_save_job = None
+        if not self.live_save_var.get():
+            return
+        try:
+            self._apply_widget_values()
+        except ValueError as exc:
+            self._set_save_status(f"Live Save: invalid settings — {exc}", error=True)
+            return
+        if self._write_settings(self.settings):
+            self._set_save_status("Live Save: saved")
+
+    def _toggle_live_save(self, *_args: object) -> None:
+        """Persist the preference and flush any valid edits when it is toggled."""
+        self._cancel_live_save()
+        enabled = self.live_save_var.get()
+        try:
+            self._apply_widget_values()
+        except ValueError:
+            # Retain the last valid snapshot while still remembering the preference.
+            self.settings = replace(self.settings, live_save=enabled)
+            if self._write_settings(self.settings):
+                self._set_save_status("Live Save: invalid edits not saved", error=True)
+            return
+        if self._write_settings(self.settings):
+            self._set_save_status("Live Save: saved" if enabled else "Live Save: off")
 
     def _start_overlay(self) -> None:
         """Start and monitor the Qt overlay in its own process."""
@@ -582,12 +676,18 @@ class AimbotApp:
         if self.is_running:
             return
             
+        self._cancel_live_save()
         try:
             self._apply_widget_values()
         except ValueError as exc:
-            messagebox.showerror("Invalid aim zones", str(exc))
+            if self.live_save_var.get():
+                self._set_save_status(f"Live Save: invalid settings — {exc}", error=True)
+            messagebox.showerror("Invalid settings", str(exc))
             return
-        save_settings(self.settings)
+        if self._write_settings(self.settings):
+            self._set_save_status(
+                "Live Save: saved" if self.settings.live_save else "Live Save: off"
+            )
 
         try:
             if self.bot_thread and self.bot_thread.is_alive():
@@ -604,7 +704,7 @@ class AimbotApp:
 
             # Start initialisation and aimbot in a separate thread
             self.bot_thread = threading.Thread(
-                target=self._initialise_and_run, daemon=True
+                target=self._initialise_and_run, args=(replace(self.settings),), daemon=True
             )
             self.bot_thread.start()
 
@@ -615,15 +715,15 @@ class AimbotApp:
             self._update_button_states()
             messagebox.showerror("Error", f"Failed to start aimbot or ESP: {str(e)}")
 
-    def _initialise_and_run(self) -> None:
-        """Initialise memory and run the aimbot."""
+    def _initialise_and_run(self, settings: AimbotSettings) -> None:
+        """Initialise and run with a snapshot of the settings at Start."""
         try:
             mem = DeadlockMemory()
             if self.stop_event.is_set():
                 mem.pm.close()
                 return
             try:
-                self.bot = Aimbot(mem, self.settings)
+                self.bot = Aimbot(mem, settings)
             except Exception:
                 mem.pm.close()
                 raise
@@ -707,12 +807,14 @@ class AimbotApp:
 
     def on_close(self) -> None:
         """Handle window close event."""
+        self._cancel_live_save()
         try:
             self._apply_widget_values()
-        except ValueError:
-            pass  # Keep the last valid settings rather than saving invalid zone weights.
+        except ValueError as exc:
+            messagebox.showwarning("Settings not saved", f"Invalid edits were not saved: {exc}")
         else:
-            save_settings(self.settings)
+            if not self._write_settings(self.settings):
+                messagebox.showwarning("Settings not saved", "See Logs for the save error.")
         
         if self.is_running:
             self.stop()

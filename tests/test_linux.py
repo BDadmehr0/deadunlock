@@ -222,7 +222,11 @@ class InputTests(unittest.TestCase):
         self.assertFalse(device.button_down(8))
         info.state = unrelated
         self.assertFalse(device.button_down(8))
+        info.state, _ = button_state.parse_binary_value(struct.pack("=I", 1 << 9), None, 12, None)
+        self.assertTrue(device.button_down(9))
+        self.assertFalse(device.button_down(8))
         info.state = pressed
+        self.assertFalse(device.button_down(9))
         master.enabled = False
         self.assertFalse(device.button_down(8))
         with self.assertRaises(ValueError):
