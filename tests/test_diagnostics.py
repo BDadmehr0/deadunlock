@@ -143,7 +143,7 @@ class NoTargetLoggingTests(unittest.TestCase):
             set_angles=Mock(),
         )
         device = Mock()
-        device.button_down.side_effect = lambda button: button == 1
+        device.button_down.side_effect = lambda button: button == 8
         with patch("deadlock.aimbot.X11Input", return_value=device):
             bot = Aimbot(memory)
         sleeps = []

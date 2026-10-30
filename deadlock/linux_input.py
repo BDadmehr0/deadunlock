@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from Xlib import X, XK, display
-from Xlib.ext import xtest
+from Xlib.ext import xinput, xtest
 
 
 class X11Input:
@@ -14,10 +14,18 @@ class X11Input:
             self.display = display.Display()
         except Exception as exc:
             raise RuntimeError("Cannot connect to X11; use an X11 session and set DISPLAY") from exc
-        if not self.display.has_extension("XTEST"):
+        try:
+            if not self.display.has_extension("XTEST"):
+                raise RuntimeError("The X11 server does not provide the XTEST extension")
+            if not self.display.has_extension("XInputExtension"):
+                raise RuntimeError("Mouse 4 requires the XInput2 extension on the X11 server")
+            version = self.display.xinput_query_version()
+            if version.major_version < 2:
+                raise RuntimeError("Mouse 4 requires XInput version 2 or newer")
+            self.root = self.display.screen().root
+        except Exception:
             self.display.close()
-            raise RuntimeError("The X11 server does not provide the XTEST extension")
-        self.root = self.display.screen().root
+            raise
 
     def key_down(self, key: int) -> bool:
         """Check an ASCII letter or digit, as used by the GUI settings."""
@@ -29,9 +37,26 @@ class X11Input:
         return bool(keys[code // 8] & (1 << (code % 8)))
 
     def button_down(self, button: int) -> bool:
-        """Check the X11 button number (1 left, 3 right)."""
-        mask = {1: X.Button1Mask, 3: X.Button3Mask}[button]
-        return bool(self.root.query_pointer().mask & mask)
+        """Check an X11 button: 1 left, 3 right, or 8 for the usual Mouse 4.
+
+        Core X11 pointer masks stop at button 5. XInput2 reports the mapped
+        button state for master pointers, including side buttons.
+        """
+        if button in (1, 3):
+            mask = {1: X.Button1Mask, 3: X.Button3Mask}[button]
+            return bool(self.root.query_pointer().mask & mask)
+        if button != 8:
+            raise ValueError(f"Unsupported X11 button {button}")
+        devices = self.display.xinput_query_device(xinput.AllMasterDevices).devices
+        for device in devices:
+            if device.use != xinput.MasterPointer or not device.enabled:
+                continue
+            for info in device.classes:
+                # python-xlib shifts the XI2 mask so state[0] represents button 1.
+                if info.type == xinput.ButtonClass and len(info.state) >= button:
+                    if info.state[button - 1]:
+                        return True
+        return False
 
     def button_event(self, button: int, pressed: bool) -> None:
         """Send a mouse press or release."""

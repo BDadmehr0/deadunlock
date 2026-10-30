@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import subprocess
 import time
 import logging
 import queue
@@ -13,7 +14,6 @@ import tkinter as tk
 from dataclasses import asdict
 from tkinter import scrolledtext, ttk, messagebox
 
-from .update_checker import _get_current_version
 from .aimbot import AimbotSettings
 
 if getattr(sys, "frozen", False):
@@ -46,12 +46,18 @@ def save_settings(settings: AimbotSettings) -> None:
 def get_build_sha() -> str:
     """Return the short commit SHA for the current build."""
     try:
-        sha = _get_current_version()
-        if sha:
-            return sha[:7]
-    except Exception:
-        pass
-    return "unknown"
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if getattr(sys, "frozen", False):
+            version_file = os.path.join(getattr(sys, "_MEIPASS", root), "version.txt")
+            if os.path.exists(version_file):
+                with open(version_file, "r", encoding="utf-8") as fh:
+                    version = fh.read().strip()
+                return version[:7] if version else "unknown"
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, stderr=subprocess.DEVNULL
+        ).decode().strip()[:7] or "unknown"
+    except (OSError, subprocess.SubprocessError, UnicodeError):
+        return "unknown"
 
 
 class GUILogHandler(logging.Handler):

@@ -49,7 +49,7 @@ class ZoneSettingsTests(unittest.TestCase):
         with patch("deadlock.aimbot.X11Input"):
             bot = Aimbot(SimpleNamespace(), AimbotSettings())
         target = {"position": (10, 20, 170), "node": 100}
-        for zone, expected in (("head", (10, 20, 230)), ("body", (10, 20, 170)),
+        for zone, expected in (("head", (10, 20, 200)), ("body", (10, 20, 170)),
                                ("legs", (10, 20, 130))):
             bot._last_bad_bone_warning = float("-inf")
             with self.subTest(zone=zone), self.assertLogs("deadlock.aimbot", level="WARNING"):
@@ -72,7 +72,7 @@ class ZoneSettingsTests(unittest.TestCase):
                 return target
             raise EntityUnavailable("empty")
 
-        for zone, height in (("head", 130), ("body", 70), ("legs", 30)):
+        for zone, height in (("head", 100), ("body", 70), ("legs", 30)):
             with self.subTest(zone=zone):
                 memory = SimpleNamespace(
                     read_entity=Mock(side_effect=read_entity),
@@ -82,7 +82,7 @@ class ZoneSettingsTests(unittest.TestCase):
                 )
                 with patch("deadlock.aimbot.X11Input"):
                     bot = Aimbot(memory)
-                bot.input.button_down.side_effect = lambda button: button == 1
+                bot.input.button_down.side_effect = lambda button: button == 8
                 bot._select_zone = Mock(return_value=zone)
                 with patch("deadlock.aimbot.time.sleep", side_effect=lambda _: bot.stop()):
                     with self.assertLogs("deadlock.aimbot", level="WARNING"):
@@ -90,6 +90,34 @@ class ZoneSettingsTests(unittest.TestCase):
                 yaw, pitch = calculate_camera_rotation((100, 100, 100), (200, 150, height))
                 expected = calculate_new_camera_angles(0, 0, yaw, -pitch, 5.0)
                 memory.set_angles.assert_called_once_with(*expected, 0)
+
+    def test_head_height_adjustment_applies_to_bone_and_fallback_only(self):
+        settings = AimbotSettings(head_vertical_offset=-20, random_zones=True)
+        memory = SimpleNamespace(read_longlong=Mock(return_value=0x4000), read_float=Mock())
+        with patch("deadlock.aimbot.X11Input"):
+            bot = Aimbot(memory, settings)
+        target = {"position": (100, 200, 170), "node": 0x1000}
+        memory.read_float.side_effect = [100, 200, 210]
+        self.assertEqual(bot._target_position(target, 7, "head"), (100, 200, 190))
+        with self.assertLogs("deadlock.aimbot", level="WARNING"):
+            self.assertEqual(bot._target_position(target, None, "head"), (100, 200, 180))
+        self.assertEqual(bot._target_position(target, None, "body"), (100, 200, 170))
+        self.assertEqual(bot._target_position(target, None, "legs"), (100, 200, 130))
+
+    def test_head_adjustment_does_not_change_bone_plausibility_check(self):
+        memory = SimpleNamespace(read_longlong=Mock(return_value=0x4000),
+                                 read_float=Mock(side_effect=[100, 200, 360]))
+        with patch("deadlock.aimbot.X11Input"):
+            bot = Aimbot(memory, AimbotSettings(head_vertical_offset=-100))
+        target = {"position": (100, 200, 170), "node": 0x1000}
+        self.assertEqual(bot._target_position(target, 7, "head"), (100, 200, 260))
+
+    def test_bad_height_adjustments_are_rejected_before_opening_input(self):
+        for value in (-101, 101, 1.5, True, "0"):
+            with self.subTest(value=value), patch("deadlock.aimbot.X11Input") as x11:
+                with self.assertRaisesRegex(ValueError, "Head vertical adjustment"):
+                    Aimbot(Mock(), AimbotSettings(head_vertical_offset=value))
+                x11.assert_not_called()
 
     def test_old_settings_can_be_loaded_and_new_settings_round_trip(self):
         # Avoid importing the Tk GUI helpers when Tk is unavailable in the test environment.

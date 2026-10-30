@@ -22,9 +22,9 @@ from .heroes import get_body_bone_index, get_head_bone_index
 from .helpers import calculate_camera_rotation, calculate_new_camera_angles
 from .memory import DeadlockMemory, EntityUnavailable
 from . import mem_offsets as mo
-from .update_checker import ensure_up_to_date
 
 logger = logging.getLogger(__name__)
+AIM_BUTTON = 8  # X11's usual side/back button, commonly called Mouse 4.
 
 
 @dataclass
@@ -41,6 +41,8 @@ class AimbotSettings:
     head_weight: int = 100
     body_weight: int = 25
     legs_weight: int = 25
+    head_vertical_offset: int = 0
+    #: Additional head height in game units; negative values move aim down.
 
     target_select_type: str = "fov"  # "distance" or "fov"
     #: prioritisation strategy when selecting targets
@@ -109,6 +111,9 @@ class Aimbot:
 
         self.mem = mem
         self.settings = settings or AimbotSettings()
+        offset = self.settings.head_vertical_offset
+        if isinstance(offset, bool) or not isinstance(offset, int) or not -100 <= offset <= 100:
+            raise ValueError("Head vertical adjustment must be an integer from -100 to 100")
         self._zone_weights = (
             {zone: random.randint(1, 100) for zone in ("head", "body", "legs")}
             if self.settings.random_zones else self.settings.zone_weights()
@@ -182,8 +187,12 @@ class Aimbot:
         """Use a plausible bone or an unverified height estimate for the chosen zone."""
         centre = target["position"]
         # Player position is currently origin + 70; these estimates are not hitboxes.
-        height_delta = {"head": 60, "body": 0, "legs": -40}[zone]
-        fallback = (centre[0], centre[1], centre[2] + height_delta)
+        height_delta = {"head": 30, "body": 0, "legs": -40}[zone]
+        adjustment = self.settings.head_vertical_offset if zone == "head" else 0
+        fallback = (centre[0], centre[1], centre[2] + height_delta + adjustment)
+        # Keep the original head plausibility anchor; calibration must not change validity.
+        anchor_height = 60 if zone == "head" else height_delta
+        reference = (centre[0], centre[1], centre[2] + anchor_height)
         try:
             if bone_index is None:
                 raise ValueError(f"no {zone} bone index")
@@ -194,9 +203,9 @@ class Aimbot:
             bone = tuple(self.mem.read_float(address + offset) for offset in (0, 4, 8))
             # This bound is only a sanity check, not proof that the bone is correct.
             if (not all(math.isfinite(value) for value in bone)
-                    or bone == (0.0, 0.0, 0.0) or math.dist(bone, fallback) > 150):
+                    or bone == (0.0, 0.0, 0.0) or math.dist(bone, reference) > 150):
                 raise ValueError("implausible bone position")
-            return bone
+            return bone[0], bone[1], bone[2] + adjustment
         except (OSError, OverflowError, ValueError) as exc:
             now = time.monotonic()
             if now - self._last_bad_bone_warning >= 5:
@@ -225,14 +234,14 @@ class Aimbot:
     def run(self) -> None:
         """Main aimbot loop."""
 
-        logger.info("Aimbot loop started - hold the left mouse button to aim")
+        logger.info("Aimbot loop started - hold Mouse 4 (X11 button 8) to aim")
         log_state_changes = False
         prev_locked = None
         hold_down_left_click = False
         waiting_for_local_player = False
         last_no_target_warning = float("-inf")
         try:
-            active = self.input.button_down(1) or time.time() < self.force_aim_until
+            active = self.input.button_down(AIM_BUTTON) or time.time() < self.force_aim_until
             while not self.stop_requested:
                 try:
                     # Check if paused
@@ -285,7 +294,9 @@ class Aimbot:
                     self._update_ability_lock(my_data["hero"])
                     my_aim_angle = my_data["aim_angle"]
 
-                    mouse_down = self.input.button_down(1) or time.time() < self.force_aim_until
+                    mouse_down = (
+                        self.input.button_down(AIM_BUTTON) or time.time() < self.force_aim_until
+                    )
                     if not log_state_changes and not mouse_down:
                         log_state_changes = True
                         active = False
@@ -294,7 +305,7 @@ class Aimbot:
                         if log_state_changes:
                             logger.info("Aimbot turned %s", "on" if active else "off")
                     if not mouse_down:
-                        # Left mouse button is not held and no ability lock active
+                        # Mouse 4 is not held and no ability lock is active.
                         if self.locked_on is not None:
                             self._last_lock_lost = time.time()
                         self.locked_on = None
@@ -444,7 +455,6 @@ def main(argv: list[str] | None = None) -> None:
         level=logging.DEBUG if args.debug else logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    ensure_up_to_date()
     mem = DeadlockMemory()
     try:
         bot = Aimbot(mem)

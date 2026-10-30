@@ -2,7 +2,9 @@
 
 import importlib
 import sys
+import tempfile
 import types
+from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
 
@@ -50,6 +52,38 @@ class ZoneGuiTests(unittest.TestCase):
             setattr(self.app, name, Variable(""))
         self.app.target_var.set("fov")
 
+    def test_gui_startup_does_not_check_for_updates_or_open_browser(self):
+        self.tk.messagebox.reset_mock()
+        with patch.object(self.gui, "load_saved_settings", return_value=self.gui.AimbotSettings()), \
+             patch.object(self.gui.AimbotApp, "_build_widgets"), \
+             patch.object(self.gui.AimbotApp, "_process_log_queue"), \
+             patch("socket.create_connection") as network, \
+             patch("webbrowser.open") as browser:
+            app = self.gui.AimbotApp(Mock())
+        try:
+            network.assert_not_called()
+            browser.assert_not_called()
+            self.tk.messagebox.askyesno.assert_not_called()
+        finally:
+            self.gui.logging.getLogger("deadlock.aimbot").removeHandler(app.log_handler)
+            self.gui.logging.getLogger("offset_finder").removeHandler(app.log_handler)
+
+    def test_build_id_is_local_and_handles_missing_git(self):
+        subprocess = self.gui.get_build_sha.__globals__["subprocess"]
+        with patch.object(subprocess, "check_output", return_value=b"abcdef123456\n"), \
+             patch("socket.create_connection") as network:
+            self.assertEqual(self.gui.get_build_sha(), "abcdef1")
+            network.assert_not_called()
+        with patch.object(subprocess, "check_output", side_effect=OSError("missing git")):
+            self.assertEqual(self.gui.get_build_sha(), "unknown")
+
+    def test_frozen_build_id_uses_bundled_version_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "version.txt").write_text("1234567890\n", encoding="utf-8")
+            with patch.object(sys, "frozen", True, create=True), \
+                 patch.object(sys, "_MEIPASS", directory, create=True):
+                self.assertEqual(self.gui.get_build_sha(), "1234567")
+
     def test_random_disables_custom_and_restores_it(self):
         app = self.app
         app.zone_enabled_vars["body"].set(True)
@@ -69,6 +103,19 @@ class ZoneGuiTests(unittest.TestCase):
         app.zone_entries["body"].state.assert_called_with(["!disabled"])
         app.zone_entries["legs"].state.assert_called_with(["disabled"])
         self.assertEqual(app.zone_weight_vars["body"].get(), "45")
+
+    def test_head_adjustment_is_validated_and_applied_in_both_modes(self):
+        app = self.app
+        for random_mode in (False, True):
+            app.random_zones_var.set(random_mode)
+            app.head_vertical_var.set("-20")
+            app._apply_widget_values()
+            self.assertEqual(app.settings.head_vertical_offset, -20)
+            for invalid in ("-101", "101", "1.5", ""):
+                app.head_vertical_var.set(invalid)
+                with self.assertRaisesRegex(ValueError, "Head height adjustment"):
+                    app._apply_widget_values()
+                self.assertEqual(app.settings.head_vertical_offset, -20)
 
     def test_invalid_manual_settings_are_rejected(self):
         app = self.app
@@ -109,9 +156,12 @@ class CombinedGuiTests(ZoneGuiTests):
         overlay = Mock()
         with patch.object(self.gui, "OverlayProcess", return_value=overlay), \
              patch.object(self.gui, "save_settings"), \
-             patch.object(self.gui, "update_available", return_value=False), \
+             patch("socket.create_connection") as network, \
+             patch("webbrowser.open") as browser, \
              patch.object(self.gui.threading, "Thread") as thread:
             self.app.start()
+            network.assert_not_called()
+            browser.assert_not_called()
             overlay.start.assert_called_once()
             self.assertIs(self.app.overlay, overlay)
             thread.return_value.start.assert_called_once()
@@ -126,7 +176,6 @@ class CombinedGuiTests(ZoneGuiTests):
         overlay.start.side_effect = OSError("cannot launch")
         with patch.object(self.gui, "OverlayProcess", return_value=overlay), \
              patch.object(self.gui, "save_settings"), \
-             patch.object(self.gui, "update_available", return_value=False), \
              patch.object(self.gui.messagebox, "showerror"):
             self.app.start()
         overlay.stop.assert_called_once()
@@ -147,7 +196,6 @@ class CombinedGuiTests(ZoneGuiTests):
         self.app.esp_enabled.set(False)
         with patch.object(self.gui, "OverlayProcess") as factory, \
              patch.object(self.gui, "save_settings"), \
-             patch.object(self.gui, "update_available", return_value=False), \
              patch.object(self.gui.threading, "Thread"):
             self.app.start()
         factory.assert_not_called()
