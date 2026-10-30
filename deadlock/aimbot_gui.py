@@ -18,6 +18,7 @@ from tkinter import messagebox, scrolledtext, ttk
 
 from .aimbot import Aimbot, AimbotSettings
 from .memory import DeadlockMemory
+from .overlay_process import OverlayProcess
 from .gui_utils import (
     GUILogHandler,
     load_saved_settings,
@@ -32,8 +33,10 @@ from .update_checker import update_available, open_release_page
 class AimbotApp:
     """Main application controller for the DeadUnlock GUI."""
 
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: tk.Tk, *, combined: bool = False) -> None:
         self.root = root
+        self.combined = combined
+        self.overlay: OverlayProcess | None = None
         self.root.title("DeadUnlock")
         self.root.geometry("860x580")
         self.root.minsize(720, 520)
@@ -291,6 +294,10 @@ class AimbotApp:
             width=14,
         )
         self.toggle_button.grid(row=0, column=0, padx=(0, 0))
+        if self.combined:
+            self.esp_enabled = tk.BooleanVar(value=True)
+            self.esp_check = ttk.Checkbutton(controls, text="ESP overlay", variable=self.esp_enabled)
+            self.esp_check.grid(row=0, column=1, padx=(10, 0))
 
     def _build_tabs(self) -> None:
         """Create the main notebook and its tabs."""
@@ -317,11 +324,14 @@ class AimbotApp:
 
         self.status_label = ttk.Label(bar, text="Status: Stopped", foreground="red")
         self.status_label.grid(row=0, column=0, sticky="w")
+        if self.combined:
+            self.esp_status_label = ttk.Label(bar, text="ESP: stopped", foreground="#9ca3af")
+            self.esp_status_label.grid(row=0, column=1, sticky="e", padx=(0, 16))
 
         sha = get_build_sha()
         ttk.Label(
             bar, text=f"build {sha}", font=("Segoe UI", 9)
-        ).grid(row=0, column=1, sticky="e")
+        ).grid(row=0, column=2, sticky="e")
 
     def _build_settings_frame(self, parent: ttk.Frame) -> None:
         """Build the settings tab content."""
@@ -500,7 +510,9 @@ class AimbotApp:
         self.status_label.config(text=f"Status: {status}", foreground=color)
     
     def _update_button_states(self) -> None:
-        """Update the single toggle button to reflect running state."""
+        """Update controls to reflect running state."""
+        if self.combined:
+            self.esp_check.state(["disabled"] if self.is_running else ["!disabled"])
         if not self.is_running:
             self.toggle_button.config(
                 text="Start",
@@ -566,8 +578,40 @@ class AimbotApp:
         if self.paradox_e_key.get():
             self.settings.paradox_e_key = ord(self.paradox_e_key.get().upper()[0])
 
+    def _start_overlay(self) -> None:
+        """Start and monitor the Qt overlay in its own process."""
+        overlay = OverlayProcess(self.log_queue.put)
+        self.overlay = overlay
+        overlay.start()
+        self.esp_status_label.config(text="ESP: starting", foreground="#60a5fa")
+        self.log_queue.put("ESP process started; check Logs for startup errors.")
+        self.root.after(500, lambda: self._poll_overlay(overlay))
+
+    def _poll_overlay(self, overlay: OverlayProcess) -> None:
+        """Report unexpected overlay exit without blocking the Tk event loop."""
+        if self.overlay is not overlay:
+            return
+        exit_code = overlay.poll()
+        if exit_code is None:
+            self.esp_status_label.config(text="ESP: process active", foreground="#10b981")
+            self.root.after(500, lambda: self._poll_overlay(overlay))
+            return
+        overlay.stop()
+        self.overlay = None
+        self.esp_status_label.config(text="ESP: exited", foreground="red")
+        self.log_queue.put(f"ESP exited (code {exit_code}); see earlier ESP messages in Logs.")
+
+    def _stop_overlay(self) -> None:
+        """Stop a managed overlay when the aimbot is stopped or fails."""
+        overlay, self.overlay = self.overlay, None
+        if overlay is not None:
+            overlay.stop()
+            self.log_queue.put("ESP stopped.")
+        if self.combined:
+            self.esp_status_label.config(text="ESP: stopped", foreground="#9ca3af")
+
     def start(self) -> None:
-        """Start the aimbot."""
+        """Start the aimbot and, if enabled, its ESP overlay."""
         if self.is_running:
             return
             
@@ -595,6 +639,8 @@ class AimbotApp:
             if self.bot_thread and self.bot_thread.is_alive():
                 messagebox.showinfo("Please wait", "The previous aimbot is still stopping.")
                 return
+            if self.combined and self.esp_enabled.get():
+                self._start_overlay()
             self.stop_event.clear()
             self.bot = None
             self.is_running = True
@@ -609,10 +655,11 @@ class AimbotApp:
             self.bot_thread.start()
 
         except Exception as e:
+            self._stop_overlay()
             self._update_status("Error", "red")
             self.is_running = False
             self._update_button_states()
-            messagebox.showerror("Error", f"Failed to start aimbot: {str(e)}")
+            messagebox.showerror("Error", f"Failed to start aimbot or ESP: {str(e)}")
 
     def _initialise_and_run(self) -> None:
         """Initialise memory and run the aimbot."""
@@ -640,27 +687,25 @@ class AimbotApp:
             finally:
                 mem.pm.close()
         except Exception as exc:
-            self.is_running = False
             msg = str(exc)
-            self.log_queue.put(f"Aimbot init error: {msg}")
-            self.root.after(0, lambda: (
-                self._update_status("Error", "red"),
-                self._update_button_states(),
-                messagebox.showerror("Error", f"Failed to start aimbot: {msg}")
-            ))
-    
+            self.log_queue.put(f"Aimbot error: {msg}")
+            if not self.stop_event.is_set():
+                self.root.after(0, lambda: self._handle_bot_error(msg))
+
+    def _handle_bot_error(self, message: str) -> None:
+        """Stop the overlay and report a bot error from the Tk thread."""
+        if self.stop_event.is_set():
+            return
+        self._stop_overlay()
+        self.is_running = False
+        self._update_status("Error", "red")
+        self._update_button_states()
+        messagebox.showerror("Error", f"Aimbot failed: {message}")
+
     def _run_aimbot(self) -> None:
         """Run the aimbot loop with pause support."""
         if self.bot:
-            try:
-                self.bot.run()
-            except Exception as e:
-                self.log_queue.put(f"Aimbot error: {str(e)}")
-                self.is_running = False
-                self.root.after(0, lambda: (
-                    self._update_status("Error", "red"),
-                    self._update_button_states()
-                ))
+            self.bot.run()
     
     def toggle_pause(self) -> None:
         """Toggle pause state of the aimbot."""
@@ -693,6 +738,7 @@ class AimbotApp:
         self.stop_event.set()
         if self.bot:
             self.bot.stop()
+        self._stop_overlay()
             
         self.is_running = False
         self.is_paused = False
@@ -716,6 +762,8 @@ class AimbotApp:
         
         if self.is_running:
             self.stop()
+        else:
+            self._stop_overlay()
         
         # Clean up logging handler
         if hasattr(self, 'log_handler'):
@@ -729,18 +777,23 @@ class AimbotApp:
         self.root.destroy()
 
 
-def main() -> None:
-    """Main entry point for the GUI application."""
-    # Ensure only one instance can run
+def main(*, combined: bool = False) -> None:
+    """Run the GUI, optionally enabling managed ESP control."""
+    app = None
     try:
         root = tk.Tk()
         root.resizable(True, True)
-        app = AimbotApp(root)
+        app = AimbotApp(root, combined=combined)
         root.mainloop()
-    except Exception as e:
-        print(f"Error starting GUI: {e}")
-        import traceback
-        traceback.print_exc()
+    finally:
+        if app is not None:
+            app.stop_event.set()
+            if app.bot is not None:
+                app.bot.stop()
+            if app.overlay is not None:
+                app.overlay.stop()
+            if app.bot_thread is not None and app.bot_thread.is_alive():
+                app.bot_thread.join(timeout=2)
 
 
 if __name__ == "__main__":

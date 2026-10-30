@@ -68,19 +68,32 @@ process) can still block access. Avoid running the GUI or game as root.
 
 ## Running
 
-Start Deadlock in Proton first, then activate the virtual environment and run:
+Start Deadlock in Proton first, then run the combined control panel:
 
 ```bash
-python -m deadlock.aimbot_gui  # settings and start/stop controls
-python -m deadlock.aimbot      # command-line aimbot
-python -m deadlock.esp         # transparent overlay
+.venv/bin/python -m deadlock
+```
+
+Press **Start** to start the aimbot and, by default, the ESP overlay. Uncheck
+**ESP overlay** before starting to run only the aimbot. **Stop** or closing the
+panel stops the managed overlay as well. The Qt overlay is a separate child
+process using a read-only game-memory handle; its errors appear in the **Logs**
+tab and its process status in the status bar. If the overlay exits, the aimbot
+continues until stopped. Changes to the checkbox apply on the next Start.
+
+Standalone entry points remain available:
+
+```bash
+.venv/bin/python -m deadlock.aimbot_gui  # aimbot panel only
+.venv/bin/python -m deadlock.aimbot      # command-line aimbot
+.venv/bin/python -m deadlock.esp         # overlay only
 ```
 
 The ESP selects Qt's `xcb` backend by default when `DISPLAY` is set. If Qt is
 explicitly configured for another backend, use the following from an X11 session:
 
 ```bash
-QT_QPA_PLATFORM=xcb python -m deadlock.esp
+QT_QPA_PLATFORM=xcb .venv/bin/python -m deadlock
 ```
 
 On Wayland this uses Xwayland only and is experimental: compositor stacking,

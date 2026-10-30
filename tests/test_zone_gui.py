@@ -27,6 +27,7 @@ class ZoneGuiTests(unittest.TestCase):
     def setUpClass(cls):
         tk = types.ModuleType("tkinter")
         tk.BooleanVar = tk.StringVar = Variable
+        tk.END = "end"
         tk.ttk = types.SimpleNamespace(
             LabelFrame=Mock(side_effect=lambda *a, **k: Mock()),
             Label=Mock(side_effect=lambda *a, **k: Mock()),
@@ -82,6 +83,95 @@ class ZoneGuiTests(unittest.TestCase):
         app.zone_weight_vars["body"].set("20")
         app._apply_widget_values()
         self.assertEqual(app.settings.zone_weights(), {"head": 70, "body": 20})
+
+
+class CombinedGuiTests(ZoneGuiTests):
+    """Verify the panel manages overlay and bot lifecycles together."""
+
+    def setUp(self):
+        super().setUp()
+        self.app.combined = True
+        self.app.overlay = None
+        self.app.esp_enabled = Variable(True)
+        self.app.esp_status_label = Mock()
+        self.app.esp_check = Mock()
+        self.app.toggle_button = Mock()
+        self.app.root = Mock()
+        self.app.log_queue = Mock()
+        self.app.is_running = False
+        self.app.bot_thread = None
+        self.app.bot = None
+        self.app.stop_event = Mock()
+        self.app.status_label = Mock()
+        self.app.log_text = Mock()
+
+    def test_start_and_stop_manage_the_overlay(self):
+        overlay = Mock()
+        with patch.object(self.gui, "OverlayProcess", return_value=overlay), \
+             patch.object(self.gui, "save_settings"), \
+             patch.object(self.gui, "update_available", return_value=False), \
+             patch.object(self.gui.threading, "Thread") as thread:
+            self.app.start()
+            overlay.start.assert_called_once()
+            self.assertIs(self.app.overlay, overlay)
+            thread.return_value.start.assert_called_once()
+            self.assertTrue(self.app.is_running)
+            self.app.stop()
+        overlay.stop.assert_called_once()
+        self.assertIsNone(self.app.overlay)
+        self.assertFalse(self.app.is_running)
+
+    def test_start_failure_cleans_up_partially_started_overlay(self):
+        overlay = Mock()
+        overlay.start.side_effect = OSError("cannot launch")
+        with patch.object(self.gui, "OverlayProcess", return_value=overlay), \
+             patch.object(self.gui, "save_settings"), \
+             patch.object(self.gui, "update_available", return_value=False), \
+             patch.object(self.gui.messagebox, "showerror"):
+            self.app.start()
+        overlay.stop.assert_called_once()
+        self.assertIsNone(self.app.overlay)
+        self.assertFalse(self.app.is_running)
+
+    def test_closing_panel_stops_managed_overlay(self):
+        overlay = Mock()
+        self.app.overlay = overlay
+        self.app.is_running = True
+        with patch.object(self.gui, "save_settings"):
+            self.app.on_close()
+        overlay.stop.assert_called_once()
+        self.app.stop_event.set.assert_called_once()
+        self.app.root.destroy.assert_called_once()
+
+    def test_unchecked_esp_does_not_spawn_overlay(self):
+        self.app.esp_enabled.set(False)
+        with patch.object(self.gui, "OverlayProcess") as factory, \
+             patch.object(self.gui, "save_settings"), \
+             patch.object(self.gui, "update_available", return_value=False), \
+             patch.object(self.gui.threading, "Thread"):
+            self.app.start()
+        factory.assert_not_called()
+        self.assertTrue(self.app.is_running)
+
+    def test_unexpected_exit_is_reported_and_reaped(self):
+        overlay = Mock()
+        overlay.poll.return_value = 3
+        self.app.overlay = overlay
+        self.app._poll_overlay(overlay)
+        overlay.stop.assert_called_once()
+        self.assertIsNone(self.app.overlay)
+        self.assertIn("code 3", self.app.log_queue.put.call_args.args[0])
+        self.app.esp_status_label.config.assert_called_with(text="ESP: exited", foreground="red")
+
+    def test_bot_failure_stops_overlay(self):
+        overlay = Mock()
+        self.app.overlay = overlay
+        self.app.is_running = True
+        self.app.stop_event.is_set.return_value = False
+        with patch.object(self.gui.messagebox, "showerror"):
+            self.app._handle_bot_error("bad process")
+        overlay.stop.assert_called_once()
+        self.assertFalse(self.app.is_running)
 
 
 if __name__ == "__main__":

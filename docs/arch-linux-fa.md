@@ -52,11 +52,22 @@ python -m pip install -r requirements.txt
 بازی را ابتدا در Steam با Proton اجرا کنید. سپس در پوشهٔ پروژه:
 
 ```bash
-. .venv/bin/activate
-python -m deadlock.aimbot_gui  # رابط تنظیمات
-# یا:
-python -m deadlock.aimbot      # خط فرمان؛ --debug برای گزارش بیشتر
-python -m deadlock.esp         # overlay؛ --debug برای گزارش بیشتر
+.venv/bin/python -m deadlock
+```
+
+در پنل، با زدن **Start** ایم‌بات و به‌صورت پیش‌فرض ESP شروع می‌شوند؛ برای
+اجرای ایم‌بات بدون overlay، پیش از Start تیک **ESP overlay** را بردارید.
+**Stop** یا بستن پنل، ESP مدیریت‌شده را هم متوقف می‌کند. پیام‌ها و خطاهای ESP
+در تب **Logs** و وضعیت پردازش آن در نوار پایین دیده می‌شوند. اگر ESP متوقف
+شود، ایم‌بات تا زدن Stop به کار ادامه می‌دهد. ESP با یک پردازش جدا و دسترسی
+فقط‌خواندنی به حافظه اجرا می‌شود.
+
+اجرای جداگانه نیز همچنان ممکن است:
+
+```bash
+.venv/bin/python -m deadlock.aimbot_gui  # پنل ایم‌بات بدون ESP
+.venv/bin/python -m deadlock.aimbot      # خط فرمان
+.venv/bin/python -m deadlock.esp         # فقط overlay
 ```
 
 نام پیش‌فرض پردازش `deadlock.exe` است. در صورت متفاوت بودن نام، با متغیر
@@ -64,7 +75,7 @@ python -m deadlock.esp         # overlay؛ --debug برای گزارش بیشت�
 می‌توانید به جای آن `DEADUNLOCK_PID` را تنظیم کنید؛ مقدار زیر فقط نمونه است:
 
 ```bash
-DEADUNLOCK_PID=12345 python -m deadlock.aimbot_gui
+DEADUNLOCK_PID=12345 .venv/bin/python -m deadlock
 ```
 
 PID واقعی را مثلاً با `ps -u "$USER" -o pid,comm,args | grep -iE 'deadlock|project8'`
@@ -85,7 +96,7 @@ PID واقعی را مثلاً با `ps -u "$USER" -o pid,comm,args | grep -iE '
 
 ```bash
 printf 'session=%s DISPLAY=%s QT_QPA_PLATFORM=%s\n' "$XDG_SESSION_TYPE" "$DISPLAY" "$QT_QPA_PLATFORM"
-QT_QPA_PLATFORM=xcb .venv/bin/python -m deadlock.esp
+QT_QPA_PLATFORM=xcb .venv/bin/python -m deadlock
 ```
 
 بهتر است وارد نشست X11 شوید. روی Wayland، استفاده از xcb فقط از طریق Xwayland
