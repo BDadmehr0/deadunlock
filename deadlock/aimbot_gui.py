@@ -18,6 +18,7 @@ from tkinter import messagebox, scrolledtext, ttk
 
 from .aimbot import Aimbot, AimbotSettings
 from .memory import DeadlockMemory
+from .overlay_process import OverlayProcess
 from .gui_utils import (
     GUILogHandler,
     load_saved_settings,
@@ -32,8 +33,10 @@ from .update_checker import update_available, open_release_page
 class AimbotApp:
     """Main application controller for the DeadUnlock GUI."""
 
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: tk.Tk, *, combined: bool = False) -> None:
         self.root = root
+        self.combined = combined
+        self.overlay: OverlayProcess | None = None
         self.root.title("DeadUnlock")
         self.root.geometry("860x580")
         self.root.minsize(720, 520)
@@ -204,10 +207,16 @@ class AimbotApp:
                         },
                     },
                     "TCheckbutton": {
-                        "configure": {"background": bg, "foreground": fg, "padding": (2, 2)}
+                        "configure": {"background": bg, "foreground": fg, "padding": (2, 2)},
+                        "map": {"foreground": [("disabled", muted)]},
                     },
                     "TEntry": {
-                        "configure": {"fieldbackground": surface, "foreground": fg}
+                        "configure": {"fieldbackground": surface, "foreground": fg},
+                        "map": {"foreground": [("disabled", muted)]},
+                    },
+                    "TSpinbox": {
+                        "configure": {"fieldbackground": surface, "foreground": fg},
+                        "map": {"foreground": [("disabled", muted)]},
                     },
                     "TCombobox": {
                         "configure": {
@@ -285,6 +294,10 @@ class AimbotApp:
             width=14,
         )
         self.toggle_button.grid(row=0, column=0, padx=(0, 0))
+        if self.combined:
+            self.esp_enabled = tk.BooleanVar(value=True)
+            self.esp_check = ttk.Checkbutton(controls, text="ESP overlay", variable=self.esp_enabled)
+            self.esp_check.grid(row=0, column=1, padx=(10, 0))
 
     def _build_tabs(self) -> None:
         """Create the main notebook and its tabs."""
@@ -292,12 +305,15 @@ class AimbotApp:
         self.notebook.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 8))
 
         settings_tab = ttk.Frame(self.notebook, padding=10)
+        zones_tab = ttk.Frame(self.notebook, padding=10)
         log_tab = ttk.Frame(self.notebook, padding=10)
 
         self.notebook.add(settings_tab, text="Settings")
+        self.notebook.add(zones_tab, text="Aim Zones")
         self.notebook.add(log_tab, text="Logs")
 
         self._build_settings_frame(settings_tab)
+        self._build_zones_frame(zones_tab)
         self._build_log_frame(log_tab)
 
     def _build_statusbar(self) -> None:
@@ -308,11 +324,14 @@ class AimbotApp:
 
         self.status_label = ttk.Label(bar, text="Status: Stopped", foreground="red")
         self.status_label.grid(row=0, column=0, sticky="w")
+        if self.combined:
+            self.esp_status_label = ttk.Label(bar, text="ESP: stopped", foreground="#9ca3af")
+            self.esp_status_label.grid(row=0, column=1, sticky="e", padx=(0, 16))
 
         sha = get_build_sha()
         ttk.Label(
             bar, text=f"build {sha}", font=("Segoe UI", 9)
-        ).grid(row=0, column=1, sticky="e")
+        ).grid(row=0, column=2, sticky="e")
 
     def _build_settings_frame(self, parent: ttk.Frame) -> None:
         """Build the settings tab content."""
@@ -322,42 +341,6 @@ class AimbotApp:
         frame.columnconfigure(1, weight=1)
 
         row = 0
-        ttk.Label(frame, text="Headshot probability").grid(row=row, column=0, sticky="w")
-        self.headshot_var = tk.DoubleVar(value=self.settings.headshot_probability)
-        self.headshot_percent = ttk.Label(frame, text=f"{int(self.headshot_var.get()*100)}%")
-        self.headshot_percent.grid(row=row, column=2, sticky="e")
-        hs_scale = ttk.Scale(
-            frame,
-            variable=self.headshot_var,
-            from_=0.0,
-            to=1.0,
-            orient=tk.HORIZONTAL,
-            length=220,
-            command=lambda _evt=None: self._on_headshot_change(),
-        )
-        hs_scale.grid(row=row, column=1, sticky="ew", padx=8)
-
-        self.headshot_warning = ttk.Label(
-            frame,
-            text="High headshot values may flag your account!",
-            foreground="red",
-        )
-        row += 1
-        self.headshot_warning.grid(row=row, column=0, columnspan=3, sticky="w", pady=(4, 0))
-        self.headshot_warning.grid_remove()
-        self._update_headshot_warning()
-
-        row += 1
-        self.acquire_headshot_var = tk.BooleanVar(
-            value=self.settings.headshot_on_acquire
-        )
-        ttk.Checkbutton(
-            frame,
-            text="Headshot on acquire",
-            variable=self.acquire_headshot_var,
-        ).grid(row=row, column=0, columnspan=3, sticky="w", pady=(6, 0))
-
-        row += 1
         ttk.Label(frame, text="Target selection").grid(row=row, column=0, sticky="w")
         self.target_var = tk.StringVar(value=self.settings.target_select_type)
         ttk.Combobox(
@@ -424,6 +407,53 @@ class AimbotApp:
             row=hero_row, column=2, sticky="w"
         )
 
+    def _build_zones_frame(self, parent: ttk.Frame) -> None:
+        """Build the weighted aim-zone controls."""
+        parent.columnconfigure(0, weight=1)
+        frame = ttk.LabelFrame(parent, text="Aim zones")
+        frame.grid(row=0, column=0, sticky="ew")
+        self.random_zones_var = tk.BooleanVar(value=self.settings.random_zones)
+        ttk.Checkbutton(
+            frame, text="Random weights (all zones)", variable=self.random_zones_var,
+            command=self._update_zone_controls,
+        ).grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(
+            frame, text="Random generates new weights at each Start. Manual weights are relative."
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 8))
+        ttk.Label(frame, text="Zone").grid(row=2, column=0, sticky="w")
+        ttk.Label(frame, text="Weight (0–100)").grid(row=2, column=1, sticky="w")
+        self.zone_enabled_vars = {}
+        self.zone_weight_vars = {}
+        self.zone_checks = {}
+        self.zone_entries = {}
+        for row, zone in enumerate(("head", "body", "legs"), start=3):
+            enabled = tk.BooleanVar(value=getattr(self.settings, f"{zone}_enabled"))
+            weight = tk.StringVar(value=str(getattr(self.settings, f"{zone}_weight")))
+            self.zone_enabled_vars[zone] = enabled
+            self.zone_weight_vars[zone] = weight
+            check = ttk.Checkbutton(
+                frame, text=zone.title(), variable=enabled, command=self._update_zone_controls
+            )
+            check.grid(row=row, column=0, sticky="w")
+            entry = ttk.Spinbox(frame, from_=0, to=100, textvariable=weight, width=8)
+            entry.grid(row=row, column=1, sticky="w", padx=(8, 0))
+            self.zone_checks[zone] = check
+            self.zone_entries[zone] = entry
+        ttk.Label(
+            frame,
+            text="Settings apply on Start. Head/leg estimates are unverified; check Logs.",
+            wraplength=680,
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        self._update_zone_controls()
+
+    def _update_zone_controls(self) -> None:
+        """Dim manual controls in random mode and disable unselected weights."""
+        random_mode = self.random_zones_var.get()
+        for zone in self.zone_enabled_vars:
+            self.zone_checks[zone].state(["disabled"] if random_mode else ["!disabled"])
+            disabled = random_mode or not self.zone_enabled_vars[zone].get()
+            self.zone_entries[zone].state(["disabled"] if disabled else ["!disabled"])
+
     def _build_status_frame(self, parent: ttk.Frame) -> None:
         """Deprecated: status is now in the status bar."""
         # Kept for backward compatibility if referenced elsewhere.
@@ -480,7 +510,9 @@ class AimbotApp:
         self.status_label.config(text=f"Status: {status}", foreground=color)
     
     def _update_button_states(self) -> None:
-        """Update the single toggle button to reflect running state."""
+        """Update controls to reflect running state."""
+        if self.combined:
+            self.esp_check.state(["disabled"] if self.is_running else ["!disabled"])
         if not self.is_running:
             self.toggle_button.config(
                 text="Start",
@@ -501,37 +533,32 @@ class AimbotApp:
         else:
             self.start()
 
-    def _update_headshot_warning(self) -> None:
-        """Show or hide the headshot probability warning."""
-        try:
-            value = float(self.headshot_var.get())
-        except tk.TclError:
-            value = 0.0
-        if value > 0.35:
-            self.headshot_warning.grid()
-        else:
-            self.headshot_warning.grid_remove()
-
-    def _on_headshot_change(self) -> None:
-        """Update headshot percentage label and warning visibility."""
-        try:
-            val = max(0.0, min(1.0, float(self.headshot_var.get())))
-        except tk.TclError:
-            val = 0.0
-        self.headshot_percent.config(text=f"{int(val * 100)}%")
-        self._update_headshot_warning()
-
     def _apply_widget_values(self) -> None:
-        """Update :attr:`settings` from widget values."""
-        # Clamp values to expected ranges
-        try:
-            self.settings.headshot_probability = max(
-                0.0, min(1.0, float(self.headshot_var.get()))
-            )
-        except Exception:
-            self.settings.headshot_probability = 0.25
+        """Validate and update settings from widget values."""
+        random_zones = self.random_zones_var.get()
+        weights = {}
+        for zone, variable in self.zone_weight_vars.items():
+            try:
+                value = int(variable.get())
+                if not 0 <= value <= 100:
+                    raise ValueError
+            except ValueError as exc:
+                if not random_zones:
+                    raise ValueError(
+                        f"{zone.title()} weight must be an integer from 0 to 100"
+                    ) from exc
+                # Invalid inactive edits do not affect random mode or overwrite saved values.
+                value = getattr(self.settings, f"{zone}_weight")
+            weights[zone] = value
+        if not random_zones and not any(
+            self.zone_enabled_vars[zone].get() and weights[zone] for zone in weights
+        ):
+            raise ValueError("Select at least one zone with a positive weight")
+        for zone, weight in weights.items():
+            setattr(self.settings, f"{zone}_weight", weight)
+            setattr(self.settings, f"{zone}_enabled", self.zone_enabled_vars[zone].get())
+        self.settings.random_zones = random_zones
         self.settings.target_select_type = self.target_var.get()
-        self.settings.headshot_on_acquire = self.acquire_headshot_var.get()
 
         self.settings.grey_talon_lock_enabled = self.grey_enabled.get()
         if self.grey_key.get():
@@ -551,12 +578,48 @@ class AimbotApp:
         if self.paradox_e_key.get():
             self.settings.paradox_e_key = ord(self.paradox_e_key.get().upper()[0])
 
+    def _start_overlay(self) -> None:
+        """Start and monitor the Qt overlay in its own process."""
+        overlay = OverlayProcess(self.log_queue.put)
+        self.overlay = overlay
+        overlay.start()
+        self.esp_status_label.config(text="ESP: starting", foreground="#60a5fa")
+        self.log_queue.put("ESP process started; check Logs for startup errors.")
+        self.root.after(500, lambda: self._poll_overlay(overlay))
+
+    def _poll_overlay(self, overlay: OverlayProcess) -> None:
+        """Report unexpected overlay exit without blocking the Tk event loop."""
+        if self.overlay is not overlay:
+            return
+        exit_code = overlay.poll()
+        if exit_code is None:
+            self.esp_status_label.config(text="ESP: process active", foreground="#10b981")
+            self.root.after(500, lambda: self._poll_overlay(overlay))
+            return
+        overlay.stop()
+        self.overlay = None
+        self.esp_status_label.config(text="ESP: exited", foreground="red")
+        self.log_queue.put(f"ESP exited (code {exit_code}); see earlier ESP messages in Logs.")
+
+    def _stop_overlay(self) -> None:
+        """Stop a managed overlay when the aimbot is stopped or fails."""
+        overlay, self.overlay = self.overlay, None
+        if overlay is not None:
+            overlay.stop()
+            self.log_queue.put("ESP stopped.")
+        if self.combined:
+            self.esp_status_label.config(text="ESP: stopped", foreground="#9ca3af")
+
     def start(self) -> None:
-        """Start the aimbot."""
+        """Start the aimbot and, if enabled, its ESP overlay."""
         if self.is_running:
             return
             
-        self._apply_widget_values()
+        try:
+            self._apply_widget_values()
+        except ValueError as exc:
+            messagebox.showerror("Invalid aim zones", str(exc))
+            return
         save_settings(self.settings)
 
         try:
@@ -576,6 +639,8 @@ class AimbotApp:
             if self.bot_thread and self.bot_thread.is_alive():
                 messagebox.showinfo("Please wait", "The previous aimbot is still stopping.")
                 return
+            if self.combined and self.esp_enabled.get():
+                self._start_overlay()
             self.stop_event.clear()
             self.bot = None
             self.is_running = True
@@ -590,10 +655,11 @@ class AimbotApp:
             self.bot_thread.start()
 
         except Exception as e:
+            self._stop_overlay()
             self._update_status("Error", "red")
             self.is_running = False
             self._update_button_states()
-            messagebox.showerror("Error", f"Failed to start aimbot: {str(e)}")
+            messagebox.showerror("Error", f"Failed to start aimbot or ESP: {str(e)}")
 
     def _initialise_and_run(self) -> None:
         """Initialise memory and run the aimbot."""
@@ -621,27 +687,25 @@ class AimbotApp:
             finally:
                 mem.pm.close()
         except Exception as exc:
-            self.is_running = False
             msg = str(exc)
-            self.log_queue.put(f"Aimbot init error: {msg}")
-            self.root.after(0, lambda: (
-                self._update_status("Error", "red"),
-                self._update_button_states(),
-                messagebox.showerror("Error", f"Failed to start aimbot: {msg}")
-            ))
-    
+            self.log_queue.put(f"Aimbot error: {msg}")
+            if not self.stop_event.is_set():
+                self.root.after(0, lambda: self._handle_bot_error(msg))
+
+    def _handle_bot_error(self, message: str) -> None:
+        """Stop the overlay and report a bot error from the Tk thread."""
+        if self.stop_event.is_set():
+            return
+        self._stop_overlay()
+        self.is_running = False
+        self._update_status("Error", "red")
+        self._update_button_states()
+        messagebox.showerror("Error", f"Aimbot failed: {message}")
+
     def _run_aimbot(self) -> None:
         """Run the aimbot loop with pause support."""
         if self.bot:
-            try:
-                self.bot.run()
-            except Exception as e:
-                self.log_queue.put(f"Aimbot error: {str(e)}")
-                self.is_running = False
-                self.root.after(0, lambda: (
-                    self._update_status("Error", "red"),
-                    self._update_button_states()
-                ))
+            self.bot.run()
     
     def toggle_pause(self) -> None:
         """Toggle pause state of the aimbot."""
@@ -674,6 +738,7 @@ class AimbotApp:
         self.stop_event.set()
         if self.bot:
             self.bot.stop()
+        self._stop_overlay()
             
         self.is_running = False
         self.is_paused = False
@@ -688,11 +753,17 @@ class AimbotApp:
 
     def on_close(self) -> None:
         """Handle window close event."""
-        self._apply_widget_values()
-        save_settings(self.settings)
+        try:
+            self._apply_widget_values()
+        except ValueError:
+            pass  # Keep the last valid settings rather than saving invalid zone weights.
+        else:
+            save_settings(self.settings)
         
         if self.is_running:
             self.stop()
+        else:
+            self._stop_overlay()
         
         # Clean up logging handler
         if hasattr(self, 'log_handler'):
@@ -706,18 +777,23 @@ class AimbotApp:
         self.root.destroy()
 
 
-def main() -> None:
-    """Main entry point for the GUI application."""
-    # Ensure only one instance can run
+def main(*, combined: bool = False) -> None:
+    """Run the GUI, optionally enabling managed ESP control."""
+    app = None
     try:
         root = tk.Tk()
         root.resizable(True, True)
-        app = AimbotApp(root)
+        app = AimbotApp(root, combined=combined)
         root.mainloop()
-    except Exception as e:
-        print(f"Error starting GUI: {e}")
-        import traceback
-        traceback.print_exc()
+    finally:
+        if app is not None:
+            app.stop_event.set()
+            if app.bot is not None:
+                app.bot.stop()
+            if app.overlay is not None:
+                app.overlay.stop()
+            if app.bot_thread is not None and app.bot_thread.is_alive():
+                app.bot_thread.join(timeout=2)
 
 
 if __name__ == "__main__":

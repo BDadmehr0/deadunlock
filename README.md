@@ -68,19 +68,32 @@ process) can still block access. Avoid running the GUI or game as root.
 
 ## Running
 
-Start Deadlock in Proton first, then activate the virtual environment and run:
+Start Deadlock in Proton first, then run the combined control panel:
 
 ```bash
-python -m deadlock.aimbot_gui  # settings and start/stop controls
-python -m deadlock.aimbot      # command-line aimbot
-python -m deadlock.esp         # transparent overlay
+.venv/bin/python -m deadlock
+```
+
+Press **Start** to start the aimbot and, by default, the ESP overlay. Uncheck
+**ESP overlay** before starting to run only the aimbot. **Stop** or closing the
+panel stops the managed overlay as well. The Qt overlay is a separate child
+process using a read-only game-memory handle; its errors appear in the **Logs**
+tab and its process status in the status bar. If the overlay exits, the aimbot
+continues until stopped. Changes to the checkbox apply on the next Start.
+
+Standalone entry points remain available:
+
+```bash
+.venv/bin/python -m deadlock.aimbot_gui  # aimbot panel only
+.venv/bin/python -m deadlock.aimbot      # command-line aimbot
+.venv/bin/python -m deadlock.esp         # overlay only
 ```
 
 The ESP selects Qt's `xcb` backend by default when `DISPLAY` is set. If Qt is
 explicitly configured for another backend, use the following from an X11 session:
 
 ```bash
-QT_QPA_PLATFORM=xcb python -m deadlock.esp
+QT_QPA_PLATFORM=xcb .venv/bin/python -m deadlock
 ```
 
 On Wayland this uses Xwayland only and is experimental: compositor stacking,
@@ -105,6 +118,24 @@ does not expand the aimbot's target range. Use `--show-unreadable` to print
 every failed slot. The process still requires read permission under
 ptrace/Yama. A reported candidate does not validate the camera, bone indices,
 game offsets, or writes.
+
+In the GUI's **Aim Zones** tab, select head, body, and/or legs and assign each
+one a relative weight from 0 to 100. For example, 70/20/10 gives those zones
+70%/20%/10% selection probabilities when all three are enabled. At least one
+enabled weight must be positive. The choice is held for 0.4 seconds; settings
+apply on Start. Random mode disables manual controls and generates new weights
+for all three zones each time the bot starts; the weights are shown in Logs.
+Manual settings are retained when switching modes. The old headshot probability
+and headshot-on-acquire settings are retained for loading old files but no
+longer control targeting. By default, only head is enabled.
+
+The scene-origin offset was observed on one Proton build. Unreadable, zero,
+non-finite or implausibly distant bone coordinates cause a warning and a rough
+height-based estimate for the selected zone. No verified leg bone is available,
+so legs always use an estimate. These estimates are not hitboxes, and a plausible
+bone coordinate does not prove it is correct. Head/body bone indices, estimates,
+camera angles and writes still require live validation; headshots are not
+guaranteed. No wall or visibility check is performed.
 
 The command-line aimbot and ESP accept `--debug`. The aimbot uses the left
 mouse button to aim; the right button synthesizes a left click without aiming.

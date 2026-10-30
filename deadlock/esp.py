@@ -93,7 +93,7 @@ def main(argv: list[str] | None = None) -> None:
     app = QApplication(sys.argv[:1])
     if app.platformName() != "xcb":
         raise RuntimeError("The overlay requires an X11 session (Qt xcb platform)")
-    mem = DeadlockMemory()
+    mem = DeadlockMemory(read_only=True)
     try:
         ESP(mem).run()
     finally:

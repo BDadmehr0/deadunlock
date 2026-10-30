@@ -13,7 +13,8 @@ CAMERA_ROLL = 0x4C    # camera base -> roll (unused)
 # Observed with Wraith (ID 7) on one Proton build; other builds may differ.
 HERO_ID_OFFSET = 0x908 + 0x1C  # m_PlayerDataGlobal -> m_nHeroID
 GAME_SCENE_NODE = 0x330  # pawn -> CGameSceneNode pointer
-NODE_POSITION = 0xD0     # CGameSceneNode -> position vector
+# Absolute origin observed at 0xC8 on one Proton build; other builds may differ.
+NODE_POSITION = 0xC8     # CGameSceneNode -> absolute position vector
 # Observed team byte and hero pawn handle on one Proton build; may change.
 TEAM_OFFSET = 0x3EF      # controller -> uint8 team id
 PAWN_HANDLE_OFFSET = 0x8C0  # controller -> uint32 hero pawn handle
