@@ -49,10 +49,10 @@ def find_process(name: str) -> int:
 class LinuxProcess:
     """Read and write another process using Linux's proc filesystem."""
 
-    def __init__(self, pid: int) -> None:
+    def __init__(self, pid: int, *, read_only: bool = False) -> None:
         self.pid = pid
         try:
-            self.fd = os.open(f"/proc/{pid}/mem", os.O_RDWR)
+            self.fd = os.open(f"/proc/{pid}/mem", os.O_RDONLY if read_only else os.O_RDWR)
         except PermissionError as exc:
             raise PermissionError(
                 f"Cannot access /proc/{pid}/mem. Check ptrace/Yama permissions; "
@@ -151,6 +151,14 @@ class LinuxProcess:
     def read_int(self, address: int) -> int:
         """Read a signed 32-bit integer."""
         return struct.unpack("<i", self.read_bytes(address, 4))[0]
+
+    def read_uint(self, address: int) -> int:
+        """Read an unsigned 32-bit integer."""
+        return struct.unpack("<I", self.read_bytes(address, 4))[0]
+
+    def read_byte(self, address: int) -> int:
+        """Read an unsigned byte."""
+        return self.read_bytes(address, 1)[0]
 
     def read_longlong(self, address: int) -> int:
         """Read a 64-bit pointer."""

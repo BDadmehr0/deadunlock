@@ -32,12 +32,17 @@ class EntityUnavailable(ValueError):
 class DeadlockMemory:
     """Small wrapper around Linux process memory with dynamic offsets."""
 
-    def __init__(self, process: str | None = None) -> None:
-        """Open the game process and locate dynamic offsets."""
+    def __init__(
+        self, process: str | None = None, *, read_only: bool = False, pid: int | None = None
+    ) -> None:
+        """Open the game process and locate offsets; optionally prohibit writes."""
 
         self.process_name = process or os.environ.get("DEADUNLOCK_PROCESS", "deadlock.exe")
-        pid = os.environ.get("DEADUNLOCK_PID")
-        self.pm = LinuxProcess(int(pid) if pid else find_process(self.process_name))
+        env_pid = os.environ.get("DEADUNLOCK_PID")
+        process_pid = pid if pid is not None else (
+            int(env_pid) if env_pid else find_process(self.process_name)
+        )
+        self.pm = LinuxProcess(process_pid, read_only=read_only)
         try:
             self.client_base = self.pm.module_base("client.dll")
             self.offsets = self._read_offsets()
@@ -57,6 +62,14 @@ class DeadlockMemory:
 
     def read_float(self, address: int) -> float:
         return self.pm.read_float(address)
+
+    def read_uint(self, address: int) -> int:
+        """Read an unsigned 32-bit value."""
+        return self.pm.read_uint(address)
+
+    def read_byte(self, address: int) -> int:
+        """Read an unsigned byte."""
+        return self.pm.read_byte(address)
 
     def read_longlong(self, address: int) -> int:
         return self.pm.read_longlong(address)
@@ -117,16 +130,23 @@ class DeadlockMemory:
             )
             if not address_base:
                 raise EntityUnavailable(f"Entity list entry for player {index} is null")
-            controller_base = self.read_longlong(address_base + 120 * (index & 0x1FF))
+            controller_base = self.read_longlong(
+                address_base + mo.ENTITY_LIST_ENTRY_STRIDE * (index & 0x1FF)
+            )
         if not controller_base:
             raise EntityUnavailable(f"Controller pointer for player {index} is null")
-        pawn_handle = self.read_longlong(controller_base + 0x874)  # m_hPawn
+        pawn_handle = self.read_uint(controller_base + mo.PAWN_HANDLE_OFFSET)
+        pawn_index = pawn_handle & 0x7FFF
+        if pawn_handle == 0xFFFFFFFF or pawn_index in (0, 0x7FFF):
+            raise EntityUnavailable(f"Pawn handle for player {index} is invalid")
         list_entry = self.read_longlong(
-            entity_list + 0x8 * ((pawn_handle & 0x7FFF) >> 0x9) + 0x10
+            entity_list + 0x8 * (pawn_index >> 0x9) + 0x10
         )
         if not list_entry:
             raise EntityUnavailable(f"Pawn list entry for player {index} is null")
-        pawn = self.read_longlong(list_entry + 0x78 * (pawn_handle & 0x1FF))
+        pawn = self.read_longlong(
+            list_entry + mo.ENTITY_LIST_ENTRY_STRIDE * (pawn_index & 0x1FF)
+        )
         if not pawn:
             raise EntityUnavailable(f"Pawn pointer for player {index} is null")
         return controller_base, pawn
@@ -152,7 +172,7 @@ class DeadlockMemory:
             self.read_float(pos_addr + 4),
             self.read_float(pos_addr + 8) + 70,
         )
-        team = self.read_int(controller_base + mo.TEAM_OFFSET)
+        team = self.read_byte(controller_base + mo.TEAM_OFFSET)
         health = self.read_int(pawn + mo.HEALTH_OFFSET)
         
         # Get aim angle for local player (index 0) - for recoil compensation
