@@ -61,6 +61,7 @@ class ZoneGuiTests(unittest.TestCase):
         self.app.root = Mock()
         self.app.log_queue = Mock()
         self.app._build_zones_frame(Mock())
+        self.app._build_hero_heights_frame(Mock())
         for name in ("target_var", "grey_enabled", "grey_key", "yamato_enabled", "yamato_key",
                      "vindicta_enabled", "vindicta_key", "paradox_enabled", "paradox_r_key",
                      "paradox_e_key"):
@@ -110,6 +111,32 @@ class ZoneGuiTests(unittest.TestCase):
                 self.app.settings.aim_button = button
                 self.app._build_settings_frame(Mock())
                 self.assertEqual(self.app.aim_button_var.get(), label)
+
+    def test_hero_height_editor_keeps_values_separate_and_restores_them(self):
+        app = self.app
+        app.hero_height_vars["Ivy"]["head"].set("65")
+        app.hero_height_vars["Ivy"]["body"].set("42")
+        app.hero_height_vars["Abrams"]["head"].set("110")
+        app.height_hero_var.set("Ivy")
+        app.height_entries["head"].configure.assert_called_with(
+            textvariable=app.hero_height_vars["Ivy"]["head"]
+        )
+        app._apply_widget_values()
+        self.assertEqual(app.settings.hero_zone_heights,
+                         {"Ivy": {"head": 65, "body": 42}, "Abrams": {"head": 110}})
+        app._build_hero_heights_frame(Mock())
+        self.assertEqual(app.hero_height_vars["Ivy"]["head"].get(), "65")
+        self.assertEqual(app.hero_height_vars["Ivy"]["legs"].get(), "30")
+        self.assertEqual(app.hero_height_vars["Abrams"]["head"].get(), "110")
+
+    def test_invalid_height_on_another_hero_blocks_start_without_discarding_it(self):
+        app = self.app
+        app.hero_height_vars["Ivy"]["head"].set("")
+        app.height_hero_var.set("Abrams")
+        with self.assertRaisesRegex(ValueError, "Ivy head fallback height"):
+            app._apply_widget_values()
+        self.assertEqual(app.hero_height_vars["Ivy"]["head"].get(), "")
+        self.assertEqual(app.settings.hero_zone_heights, {})
 
     def test_random_disables_custom_and_restores_it(self):
         app = self.app

@@ -15,7 +15,7 @@ import tkinter as tk
 from dataclasses import asdict
 from tkinter import scrolledtext, ttk, messagebox
 
-from .aimbot import AimbotSettings
+from .aimbot import AimbotSettings, validate_hero_zone_heights
 
 if getattr(sys, "frozen", False):
     BASE_DIR = os.path.dirname(sys.executable)
@@ -33,6 +33,10 @@ def load_saved_settings() -> AimbotSettings:
         settings = AimbotSettings(**data)
         if type(settings.aim_button) is not int or settings.aim_button not in (8, 9):
             settings.aim_button = 8
+        try:
+            validate_hero_zone_heights(settings.hero_zone_heights)
+        except ValueError:
+            settings.hero_zone_heights = {}
         return settings
     except Exception:
         return AimbotSettings()
