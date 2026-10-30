@@ -76,6 +76,32 @@ python -m deadlock.aimbot      # command-line aimbot
 python -m deadlock.esp         # transparent overlay
 ```
 
+The ESP selects Qt's `xcb` backend by default when `DISPLAY` is set. If Qt is
+explicitly configured for another backend, use the following from an X11 session:
+
+```bash
+QT_QPA_PLATFORM=xcb python -m deadlock.esp
+```
+
+On Wayland this uses Xwayland only and is experimental: compositor stacking,
+transparency and global input may not work; an X11 login is recommended. A
+compositor and the Qt xcb runtime libraries are still required.
+
+If aim toggles but finds no target, the aimbot reports counts of unreadable,
+same-team and non-positive-health slots while aiming. For a one-shot report
+that opens the process memory **read-only** and does not inject input or write
+angles, run while in a match:
+
+```bash
+python -m deadlock.diagnostics --pid 12345
+```
+
+Replace `12345` with the game PID, or omit `--pid` to use the normal process
+discovery or `DEADUNLOCK_PID`. It checks only the 15 slots the aimbot scans and
+reports their read errors and team/health filters. The process still requires
+read permission under ptrace/Yama. A reported candidate does not validate the
+camera, bone indices, game offsets, or writes.
+
 The command-line aimbot and ESP accept `--debug`. The aimbot uses the left
 mouse button to aim; the right button synthesizes a left click without aiming.
 Map alternate fire in the game so the right button does not conflict. The GUI
@@ -139,6 +165,7 @@ python -m py_compile $(git ls-files '*.py')
 
 `deadlock/linux_process.py` implements process access, `offset_finder.py`
 scans loaded modules, `deadlock/linux_input.py` implements X11 input, and
-`deadlock/esp.py` implements the Qt overlay. `deadlock/memory.py` contains the
+`deadlock/esp.py` implements the Qt overlay, and `deadlock/diagnostics.py`
+provides read-only player diagnostics. `deadlock/memory.py` contains the
 game-specific memory logic; `deadlock/aimbot.py` and `aimbot_gui.py` implement
 the aimbot and its Tk interface.

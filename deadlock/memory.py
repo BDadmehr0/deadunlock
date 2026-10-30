@@ -32,12 +32,17 @@ class EntityUnavailable(ValueError):
 class DeadlockMemory:
     """Small wrapper around Linux process memory with dynamic offsets."""
 
-    def __init__(self, process: str | None = None) -> None:
-        """Open the game process and locate dynamic offsets."""
+    def __init__(
+        self, process: str | None = None, *, read_only: bool = False, pid: int | None = None
+    ) -> None:
+        """Open the game process and locate offsets; optionally prohibit writes."""
 
         self.process_name = process or os.environ.get("DEADUNLOCK_PROCESS", "deadlock.exe")
-        pid = os.environ.get("DEADUNLOCK_PID")
-        self.pm = LinuxProcess(int(pid) if pid else find_process(self.process_name))
+        env_pid = os.environ.get("DEADUNLOCK_PID")
+        process_pid = pid if pid is not None else (
+            int(env_pid) if env_pid else find_process(self.process_name)
+        )
+        self.pm = LinuxProcess(process_pid, read_only=read_only)
         try:
             self.client_base = self.pm.module_base("client.dll")
             self.offsets = self._read_offsets()

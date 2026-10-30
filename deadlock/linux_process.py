@@ -49,10 +49,10 @@ def find_process(name: str) -> int:
 class LinuxProcess:
     """Read and write another process using Linux's proc filesystem."""
 
-    def __init__(self, pid: int) -> None:
+    def __init__(self, pid: int, *, read_only: bool = False) -> None:
         self.pid = pid
         try:
-            self.fd = os.open(f"/proc/{pid}/mem", os.O_RDWR)
+            self.fd = os.open(f"/proc/{pid}/mem", os.O_RDONLY if read_only else os.O_RDWR)
         except PermissionError as exc:
             raise PermissionError(
                 f"Cannot access /proc/{pid}/mem. Check ptrace/Yama permissions; "

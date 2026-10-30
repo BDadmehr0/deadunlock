@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 
 import numpy as np
@@ -12,6 +13,7 @@ from PyQt5.QtGui import QColor, QPainter, QPen
 from PyQt5.QtWidgets import QApplication, QWidget
 
 from . import mem_offsets as mo
+from .display_config import configure_overlay_display
 from .helpers import world_to_screen
 from .memory import DeadlockMemory
 
@@ -83,6 +85,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--debug", action="store_true", help="enable debug logging")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
+    if configure_overlay_display(os.environ):
+        logger.warning(
+            "Xwayland is experimental: global input, overlay stacking, and transparency "
+            "depend on the compositor. An X11 session is recommended."
+        )
     app = QApplication(sys.argv[:1])
     if app.platformName() != "xcb":
         raise RuntimeError("The overlay requires an X11 session (Qt xcb platform)")

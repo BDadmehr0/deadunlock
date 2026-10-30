@@ -178,6 +178,7 @@ class Aimbot:
         prev_locked = None
         hold_down_left_click = False
         waiting_for_local_player = False
+        last_no_target_warning = float("-inf")
         try:
             active = self.input.button_down(1) or time.time() < self.force_aim_until
             while not self.stop_requested:
@@ -254,12 +255,21 @@ class Aimbot:
                     if self.locked_on is None:
                         target_idx = None
                         best_score = None
+                        unreadable = same_team = dead = 0
+                        example_error = None
                         for i in range(1, 16):
                             try:
                                 data = self.mem.read_entity(i)
-                            except Exception:
+                            except Exception as exc:
+                                unreadable += 1
+                                if example_error is None:
+                                    example_error = f"slot {i}: {exc}"
                                 continue
-                            if data["team"] == my_data["team"] or data["health"] <= 0:
+                            if data["team"] == my_data["team"]:
+                                same_team += 1
+                                continue
+                            if data["health"] <= 0:
+                                dead += 1
                                 continue
                             if self.settings.target_select_type == "distance":
                                 dx = my_data["position"][0] - data["position"][0]
@@ -286,6 +296,16 @@ class Aimbot:
                                     best_score = score
                                     target_idx = i
                         self.locked_on = target_idx
+                        if self.locked_on is None:
+                            now = time.monotonic()
+                            if now - last_no_target_warning >= 5:
+                                logger.warning(
+                                    "No target found: %d unreadable slots, %d same-team, "
+                                    "%d non-positive health. Example: %s. "
+                                    "Run python -m deadlock.diagnostics for a read-only report.",
+                                    unreadable, same_team, dead, example_error or "none",
+                                )
+                                last_no_target_warning = now
                         if self.locked_on is not None:
                             if time.time() - self._last_lock_lost > 2:
                                 self._force_head_until = (
