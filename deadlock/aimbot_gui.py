@@ -13,10 +13,12 @@ import os
 import queue
 import threading
 import tkinter as tk
+from copy import deepcopy
 from dataclasses import replace
 from tkinter import messagebox, scrolledtext, ttk
 
-from .aimbot import Aimbot, AimbotSettings
+from .aimbot import Aimbot, AimbotSettings, FALLBACK_ZONE_HEIGHTS
+from .heroes import HeroIds
 from .memory import DeadlockMemory
 from .overlay_process import OverlayProcess
 from .gui_utils import (
@@ -267,14 +269,17 @@ class AimbotApp:
 
         settings_tab = ttk.Frame(self.notebook, padding=10)
         zones_tab = ttk.Frame(self.notebook, padding=10)
+        heights_tab = ttk.Frame(self.notebook, padding=10)
         log_tab = ttk.Frame(self.notebook, padding=10)
 
         self.notebook.add(settings_tab, text="Settings")
         self.notebook.add(zones_tab, text="Aim Zones")
+        self.notebook.add(heights_tab, text="Hero Heights")
         self.notebook.add(log_tab, text="Logs")
 
         self._build_settings_frame(settings_tab)
         self._build_zones_frame(zones_tab)
+        self._build_hero_heights_frame(heights_tab)
         self._build_log_frame(log_tab)
 
     def _build_statusbar(self) -> None:
@@ -423,6 +428,53 @@ class AimbotApp:
         ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(8, 0))
         self._update_zone_controls()
 
+    def _build_hero_heights_frame(self, parent: ttk.Frame) -> None:
+        """Build per-target fallback-height controls without assuming hero measurements."""
+        frame = ttk.LabelFrame(parent, text="Fallback heights by target hero")
+        frame.grid(row=0, column=0, sticky="ew")
+        ttk.Label(
+            frame,
+            text="Used only when a bone is unavailable or implausible. Heights are game units "
+                 "above the scene origin, not verified hitboxes.",
+            wraplength=650,
+        ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
+        heroes = sorted(hero.name for hero in HeroIds)
+        self.hero_height_vars = {
+            hero: {
+                zone: tk.StringVar(value=str(
+                    self.settings.hero_zone_heights.get(hero, {}).get(zone, default)
+                ))
+                for zone, default in FALLBACK_ZONE_HEIGHTS.items()
+            }
+            for hero in heroes
+        }
+        ttk.Label(frame, text="Target hero").grid(row=1, column=0, sticky="w")
+        self.height_hero_var = tk.StringVar(value="Abrams")
+        ttk.Combobox(
+            frame, textvariable=self.height_hero_var, values=heroes, state="readonly", width=16
+        ).grid(row=1, column=1, sticky="w", padx=8)
+        self.height_entries = {}
+        for column, zone in enumerate(FALLBACK_ZONE_HEIGHTS):
+            ttk.Label(frame, text=zone.title()).grid(row=2, column=column, sticky="w", pady=(10, 0))
+            entry = ttk.Spinbox(frame, from_=0, to=200, width=8)
+            entry.grid(row=3, column=column, sticky="w", padx=(0, 12))
+            self.height_entries[zone] = entry
+        ttk.Label(
+            frame,
+            text="Defaults (100 / 70 / 30) are uncalibrated for most heroes. "
+                 "Global head adjustment also applies. Stop and Start to apply edits.",
+            wraplength=650,
+        ).grid(row=4, column=0, columnspan=4, sticky="w", pady=(12, 0))
+        self.height_hero_var.trace_add("write", self._show_hero_heights)
+        self._show_hero_heights()
+
+    def _show_hero_heights(self, *_args: object) -> None:
+        """Switch the editor to the selected hero without discarding unsaved edits."""
+        hero = self.height_hero_var.get()
+        if hero in self.hero_height_vars:
+            for zone, entry in self.height_entries.items():
+                entry.configure(textvariable=self.hero_height_vars[hero][zone])
+
     def _update_zone_controls(self) -> None:
         """Dim manual controls in random mode and disable unselected weights."""
         random_mode = self.random_zones_var.get()
@@ -517,6 +569,23 @@ class AimbotApp:
         if self.aim_button_var.get() not in aim_buttons:
             raise ValueError("Select Mouse 4 or Mouse 5 as the aim button")
         settings.aim_button = aim_buttons[self.aim_button_var.get()]
+        heights = {}
+        for hero, zone_vars in self.hero_height_vars.items():
+            configured = {}
+            for zone, variable in zone_vars.items():
+                try:
+                    height = int(variable.get())
+                    if not 0 <= height <= 200:
+                        raise ValueError
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"{hero} {zone} fallback height must be an integer from 0 to 200"
+                    ) from exc
+                if height != FALLBACK_ZONE_HEIGHTS[zone]:
+                    configured[zone] = height
+            if configured:
+                heights[hero] = configured
+        settings.hero_zone_heights = heights
         random_zones = self.random_zones_var.get()
         try:
             head_offset = int(self.head_vertical_var.get())
@@ -576,6 +645,9 @@ class AimbotApp:
             self.paradox_r_key, self.paradox_e_key,
             *self.zone_enabled_vars.values(), *self.zone_weight_vars.values(),
         ]
+        variables.extend(
+            variable for zones in self.hero_height_vars.values() for variable in zones.values()
+        )
         if self.combined:
             variables.append(self.esp_enabled)
         for variable in variables:
@@ -704,7 +776,7 @@ class AimbotApp:
 
             # Start initialisation and aimbot in a separate thread
             self.bot_thread = threading.Thread(
-                target=self._initialise_and_run, args=(replace(self.settings),), daemon=True
+                target=self._initialise_and_run, args=(deepcopy(self.settings),), daemon=True
             )
             self.bot_thread.start()
 

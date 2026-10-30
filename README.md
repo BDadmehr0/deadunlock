@@ -58,8 +58,13 @@ fire. The old default is Mouse 4. Configured hero ability locks can also keep
 aim active without holding the button; right-click synthesizes left-click and
 suppresses aim. Button mappings vary: use `xev` to inspect yours.
 
-**Aim Zones** sets head/body/legs weights and the head-height adjustment;
-estimated head/leg positions are not verified hitboxes. Enable **Live Save** to
+**Aim Zones** sets head/body/legs weights and a global head adjustment. In
+**Hero Heights**, select the *target* hero and set separate head/body/legs
+fallback heights above its scene origin (0–200 game units). These values apply
+only when bone data is unavailable or implausible; the global head adjustment is
+also added to the head. Defaults of 100/70/30 are legacy estimates, **not
+calibrated for all heroes**. Tune each hero from observed in-game results;
+values are estimates, not verified hitboxes. Enable **Live Save** to
 save valid panel changes to `deadlock/aimbot_settings.json` (next to the
 executable for packaged builds). Without Live Save, valid settings are still
 saved on Start or close. Saved edits do not change a running bot: **Stop** and

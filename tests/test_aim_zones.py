@@ -55,6 +55,48 @@ class ZoneSettingsTests(unittest.TestCase):
             with self.subTest(zone=zone), self.assertLogs("deadlock.aimbot", level="WARNING"):
                 self.assertEqual(bot._target_position(target, None, zone), expected)
 
+    def test_target_hero_fallbacks_are_independent_for_every_zone(self):
+        from deadlock.heroes import HeroIds
+
+        settings = AimbotSettings(
+            head_vertical_offset=-5,
+            hero_zone_heights={"Ivy": {"head": 65, "body": 44, "legs": 18},
+                               "Abrams": {"head": 110}},
+        )
+        with patch("deadlock.aimbot.X11Input"):
+            bot = Aimbot(SimpleNamespace(), settings)
+        targets = ((HeroIds.Ivy, (160, 144, 118)),
+                   (HeroIds.Abrams, (205, 170, 130)),
+                   (HeroIds.Wraith, (195, 170, 130)))
+        for hero, expected in targets:
+            for zone, height in zip(("head", "body", "legs"), expected):
+                with self.subTest(hero=hero, zone=zone):
+                    target = {"hero": hero, "position": (10, 20, 170), "node": 100}
+                    self.assertEqual(bot._target_position(target, None, zone), (10, 20, height))
+
+    def test_per_hero_fallback_does_not_alter_a_plausible_bone(self):
+        from deadlock.heroes import HeroIds
+
+        memory = SimpleNamespace(read_longlong=Mock(return_value=0x4000),
+                                 read_float=Mock(side_effect=[100, 200, 210]))
+        settings = AimbotSettings(hero_zone_heights={"Ivy": {"head": 45}},
+                                  head_vertical_offset=-10)
+        with patch("deadlock.aimbot.X11Input"):
+            bot = Aimbot(memory, settings)
+        target = {"hero": HeroIds.Ivy, "position": (100, 200, 170), "node": 0x1000}
+        self.assertEqual(bot._target_position(target, 7, "head"), (100, 200, 200))
+
+    def test_invalid_hero_heights_are_rejected_before_opening_input(self):
+        cases = (None, [], {"Fake": {"head": 20}}, {"Ivy": None},
+                 {"Ivy": {"wing": 10}}, {"Ivy": {"head": -1}},
+                 {"Ivy": {"head": 201}}, {"Ivy": {"head": 1.5}},
+                 {"Ivy": {"head": True}}, {"Ivy": {"head": "100"}})
+        for value in cases:
+            with self.subTest(value=value), patch("deadlock.aimbot.X11Input") as x11:
+                with self.assertRaises(ValueError):
+                    Aimbot(Mock(), AimbotSettings(hero_zone_heights=value))
+                x11.assert_not_called()
+
     def test_aim_loop_uses_selected_zone_when_bones_are_unavailable(self):
         from deadlock.helpers import calculate_camera_rotation, calculate_new_camera_angles
         from deadlock.heroes import HeroIds
@@ -90,6 +132,42 @@ class ZoneSettingsTests(unittest.TestCase):
                 yaw, pitch = calculate_camera_rotation((100, 100, 100), (200, 150, height))
                 expected = calculate_new_camera_angles(0, 0, yaw, -pitch, 5.0)
                 memory.set_angles.assert_called_once_with(*expected, 0)
+
+    def test_aim_loop_uses_target_hero_height_not_local_hero(self):
+        from deadlock.helpers import calculate_camera_rotation, calculate_new_camera_angles
+        from deadlock.heroes import HeroIds
+        from deadlock.memory import EntityUnavailable
+
+        local = {"hero": HeroIds.Abrams, "team": 2, "health": 730, "aim_angle": 0,
+                 "position": (100, 100, 70)}
+        target = {"hero": HeroIds.Ivy, "team": 3, "health": 373, "node": 0x1000,
+                  "position": (200, 150, 70)}
+
+        def read_entity(slot):
+            if slot == 0:
+                return local
+            if slot == 2:
+                return target
+            raise EntityUnavailable("empty")
+
+        memory = SimpleNamespace(
+            read_entity=Mock(side_effect=read_entity),
+            camera_position=Mock(return_value=(100, 100, 100)),
+            current_angles=Mock(return_value=(0, 0)),
+            read_longlong=Mock(return_value=0), set_angles=Mock(),
+        )
+        settings = AimbotSettings(hero_zone_heights={"Ivy": {"head": 65},
+                                                      "Abrams": {"head": 110}})
+        with patch("deadlock.aimbot.X11Input"):
+            bot = Aimbot(memory, settings)
+        bot.input.button_down.side_effect = lambda button: button == 8
+        with patch("deadlock.aimbot.time.sleep", side_effect=lambda _: bot.stop()):
+            with self.assertLogs("deadlock.aimbot", level="WARNING") as logs:
+                bot.run()
+        self.assertIn("Ivy head fallback is origin + 65", logs.output[0])
+        yaw, pitch = calculate_camera_rotation((100, 100, 100), (200, 150, 65))
+        expected = calculate_new_camera_angles(0, 0, yaw, -pitch, 5.0)
+        memory.set_angles.assert_called_once_with(*expected, 0)
 
     def test_head_height_adjustment_applies_to_bone_and_fallback_only(self):
         settings = AimbotSettings(head_vertical_offset=-20, random_zones=True)

@@ -10,7 +10,7 @@ player camera toward enemy targets.
 Global input is provided by X11.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import random
 import time
 import logging
@@ -18,13 +18,31 @@ import math
 import argparse
 
 from .linux_input import X11Input
-from .heroes import get_body_bone_index, get_head_bone_index
+from .heroes import HeroIds, get_body_bone_index, get_head_bone_index
 from .helpers import calculate_camera_rotation, calculate_new_camera_angles
 from .memory import DeadlockMemory, EntityUnavailable
 from . import mem_offsets as mo
 
 logger = logging.getLogger(__name__)
 AIM_BUTTON = 8  # X11's usual side/back button, commonly called Mouse 4.
+# Legacy estimates above the scene origin, not measured hitboxes.
+FALLBACK_ZONE_HEIGHTS = {"head": 100, "body": 70, "legs": 30}
+
+
+def validate_hero_zone_heights(heights: dict[str, dict[str, int]]) -> None:
+    """Reject invalid per-hero fallback heights before starting the bot."""
+    if not isinstance(heights, dict):
+        raise ValueError("Hero fallback heights must be a mapping")
+    for hero, zones in heights.items():
+        if not isinstance(hero, str) or hero not in HeroIds.__members__:
+            raise ValueError(f"Unknown hero in fallback heights: {hero!r}")
+        if not isinstance(zones, dict):
+            raise ValueError(f"Fallback heights for {hero} must be a mapping")
+        for zone, height in zones.items():
+            if zone not in FALLBACK_ZONE_HEIGHTS:
+                raise ValueError(f"Unknown fallback zone: {zone!r}")
+            if type(height) is not int or not 0 <= height <= 200:
+                raise ValueError(f"{hero} {zone} height must be an integer from 0 to 200")
 
 
 @dataclass
@@ -43,6 +61,8 @@ class AimbotSettings:
     legs_weight: int = 25
     head_vertical_offset: int = 0
     #: Additional head height in game units; negative values move aim down.
+    hero_zone_heights: dict[str, dict[str, int]] = field(default_factory=dict)
+    #: Per-target-hero fallback heights above the scene origin, in game units.
 
     target_select_type: str = "fov"  # "distance" or "fov"
     #: prioritisation strategy when selecting targets
@@ -122,6 +142,7 @@ class Aimbot:
         offset = self.settings.head_vertical_offset
         if isinstance(offset, bool) or not isinstance(offset, int) or not -100 <= offset <= 100:
             raise ValueError("Head vertical adjustment must be an integer from -100 to 100")
+        validate_hero_zone_heights(self.settings.hero_zone_heights)
         self._zone_weights = (
             {zone: random.randint(1, 100) for zone in ("head", "body", "legs")}
             if self.settings.random_zones else self.settings.zone_weights()
@@ -194,12 +215,15 @@ class Aimbot:
     ) -> tuple[float, float, float]:
         """Use a plausible bone or an unverified height estimate for the chosen zone."""
         centre = target["position"]
-        # Player position is currently origin + 70; these estimates are not hitboxes.
-        height_delta = {"head": 30, "body": 0, "legs": -40}[zone]
+        # Player position is currently origin + 70; estimates are not hitboxes.
+        hero_name = getattr(target.get("hero"), "name", None)
+        height = self.settings.hero_zone_heights.get(hero_name, {}).get(
+            zone, FALLBACK_ZONE_HEIGHTS[zone]
+        )
         adjustment = self.settings.head_vertical_offset if zone == "head" else 0
-        fallback = (centre[0], centre[1], centre[2] + height_delta + adjustment)
-        # Keep the original head plausibility anchor; calibration must not change validity.
-        anchor_height = 60 if zone == "head" else height_delta
+        fallback = (centre[0], centre[1], centre[2] - 70 + height + adjustment)
+        # Keep the original plausibility anchor; calibration must not change validity.
+        anchor_height = 60 if zone == "head" else FALLBACK_ZONE_HEIGHTS[zone] - 70
         reference = (centre[0], centre[1], centre[2] + anchor_height)
         try:
             if bone_index is None:
@@ -218,8 +242,9 @@ class Aimbot:
             now = time.monotonic()
             if now - self._last_bad_bone_warning >= 5:
                 logger.warning(
-                    "Bone data unavailable or implausible (%s); using approximate %s height. "
-                    "Hit zones and offsets are not validated.", exc, zone
+                    "Bone data unavailable or implausible (%s); %s %s fallback is origin + %s "
+                    "(global head adjustment %s). Hit zones and offsets are not validated.",
+                    exc, hero_name or "unknown hero", zone, height, adjustment,
                 )
                 self._last_bad_bone_warning = now
             return fallback

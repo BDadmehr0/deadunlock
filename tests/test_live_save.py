@@ -67,6 +67,8 @@ class LiveSaveTests(unittest.TestCase):
         self.app.zone_enabled_vars["body"].set(True)
         self.app.zone_weight_vars["body"].set("40")
         self.app.head_vertical_var.set("-12")
+        self.app.hero_height_vars["Ivy"]["head"].set("65")
+        self.app.hero_height_vars["Abrams"]["body"].set("75")
         self.app.grey_enabled.set(True)
         self.app.grey_key.set("F")
         self.app.esp_enabled.set(False)
@@ -79,6 +81,7 @@ class LiveSaveTests(unittest.TestCase):
         self.assertTrue(data["body_enabled"])
         self.assertEqual(data["body_weight"], 40)
         self.assertEqual(data["head_vertical_offset"], -12)
+        self.assertEqual(data["hero_zone_heights"], {"Ivy": {"head": 65}, "Abrams": {"body": 75}})
         self.assertTrue(data["grey_talon_lock_enabled"])
         self.assertEqual(data["grey_talon_key"], ord("F"))
         self.assertFalse(data["esp_enabled"])
@@ -87,6 +90,7 @@ class LiveSaveTests(unittest.TestCase):
         self.assertFalse(loaded.esp_enabled)
         self.assertEqual(loaded.aim_button, 9)
         self.assertEqual(loaded.head_vertical_offset, -12)
+        self.assertEqual(loaded.hero_zone_heights, {"Ivy": {"head": 65}, "Abrams": {"body": 75}})
         self.app.live_save_status.config.assert_called_with(
             text="Live Save: saved", foreground="#9ca3af"
         )
@@ -200,6 +204,7 @@ class LiveSaveTests(unittest.TestCase):
 
     def test_active_bot_receives_an_isolated_start_snapshot(self):
         self.app.live_save_var.set(True)
+        self.app.hero_height_vars["Ivy"]["head"].set("65")
         self.app.esp_enabled.set(False)
         self.app.is_running = False
         self.app.bot_thread = None
@@ -216,8 +221,11 @@ class LiveSaveTests(unittest.TestCase):
         self.assertEqual(run_settings.head_vertical_offset, 0)
         self.app.head_vertical_var.set("-20")
         self.app.aim_button_var.set("Mouse 5")
+        self.app.hero_height_vars["Ivy"]["head"].set("45")
         self.app.root.flush()
         self.assertEqual(self.data()["head_vertical_offset"], -20)
+        self.assertEqual(self.data()["hero_zone_heights"]["Ivy"]["head"], 45)
+        self.assertEqual(run_settings.hero_zone_heights["Ivy"]["head"], 65)
         self.assertEqual(self.app.settings.head_vertical_offset, -20)
         self.assertEqual(self.app.settings.aim_button, 9)
         self.assertEqual(run_settings.head_vertical_offset, 0)
@@ -231,6 +239,27 @@ class LiveSaveTests(unittest.TestCase):
         self.assertFalse(settings.live_save)
         self.assertTrue(settings.esp_enabled)
         self.assertEqual(settings.aim_button, 8)
+        self.assertEqual(settings.hero_zone_heights, {})
+
+    def test_invalid_saved_hero_heights_keep_other_preferences(self):
+        for value in (None, {"Ivy": {"head": "65"}}, {"Unknown": {"head": 10}}):
+            with self.subTest(value=value):
+                self.path.write_text(json.dumps({"hero_zone_heights": value, "head_weight": 55}),
+                                     encoding="utf-8")
+                settings = self.gui.load_saved_settings()
+                self.assertEqual(settings.hero_zone_heights, {})
+                self.assertEqual(settings.head_weight, 55)
+
+    def test_invalid_hero_height_preserves_last_live_save(self):
+        self.app.live_save_var.set(True)
+        previous = self.path.read_bytes()
+        self.app.hero_height_vars["Ivy"]["head"].set("")
+        self.app.root.flush()
+        self.assertEqual(self.path.read_bytes(), previous)
+        self.assertIn("Ivy head", self.app.live_save_status.config.call_args.kwargs["text"])
+        self.app.hero_height_vars["Ivy"]["head"].set("65")
+        self.app.root.flush()
+        self.assertEqual(self.data()["hero_zone_heights"]["Ivy"]["head"], 65)
 
     def test_invalid_saved_button_falls_back_without_losing_other_preferences(self):
         for value in (None, "9", 7, True, 9.0):
