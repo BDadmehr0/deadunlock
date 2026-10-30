@@ -152,6 +152,14 @@ class LinuxProcess:
         """Read a signed 32-bit integer."""
         return struct.unpack("<i", self.read_bytes(address, 4))[0]
 
+    def read_uint(self, address: int) -> int:
+        """Read an unsigned 32-bit integer."""
+        return struct.unpack("<I", self.read_bytes(address, 4))[0]
+
+    def read_byte(self, address: int) -> int:
+        """Read an unsigned byte."""
+        return self.read_bytes(address, 1)[0]
+
     def read_longlong(self, address: int) -> int:
         """Read a 64-bit pointer."""
         return struct.unpack("<Q", self.read_bytes(address, 8))[0]

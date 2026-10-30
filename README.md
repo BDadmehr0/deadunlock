@@ -97,10 +97,14 @@ python -m deadlock.diagnostics --pid 12345
 ```
 
 Replace `12345` with the game PID, or omit `--pid` to use the normal process
-discovery or `DEADUNLOCK_PID`. It checks only the 15 slots the aimbot scans and
-reports their read errors and team/health filters. The process still requires
-read permission under ptrace/Yama. A reported candidate does not validate the
-camera, bone indices, game offsets, or writes.
+discovery or `DEADUNLOCK_PID`. By default it checks the 15 slots the aimbot
+scans and reports their read errors and team/health filters. To investigate
+whether players exist outside that range, use `--slots 256` (up to 2048). Such
+candidates are labelled as outside the aimbot's default scan; this diagnostic
+does not expand the aimbot's target range. Use `--show-unreadable` to print
+every failed slot. The process still requires read permission under
+ptrace/Yama. A reported candidate does not validate the camera, bone indices,
+game offsets, or writes.
 
 The command-line aimbot and ESP accept `--debug`. The aimbot uses the left
 mouse button to aim; the right button synthesizes a left click without aiming.

@@ -33,12 +33,15 @@ class PlayerMemoryTests(unittest.TestCase):
     def test_observed_wraith_id_is_read_from_updated_offset(self):
         memory = DeadlockMemory.__new__(DeadlockMemory)
         memory.get_entity_base = Mock(return_value=(0x5000, 0x8000))
-        values = {0x5000 + 0x924: 7, 0x5000 + mo.TEAM_OFFSET: 2,
-                  0x8000 + mo.HEALTH_OFFSET: 500}
+        values = {0x5000 + 0x924: 7, 0x8000 + mo.HEALTH_OFFSET: 500}
         memory.read_int = Mock(side_effect=values.__getitem__)
+        memory.read_byte = Mock(return_value=2)
         memory.read_longlong = Mock(return_value=0x9000)
         memory.read_float = Mock(return_value=0.0)
-        self.assertEqual(memory.read_entity(1)["hero"], HeroIds.Wraith)
+        data = memory.read_entity(1)
+        self.assertEqual(data["hero"], HeroIds.Wraith)
+        self.assertEqual(data["team"], 2)
+        memory.read_byte.assert_called_once_with(0x5000 + 0x3ef)
         self.assertIn((0x5000 + 0x924,), [call.args for call in memory.read_int.call_args_list])
 
     def test_local_controller_does_not_read_unused_entity_slot(self):
@@ -48,15 +51,49 @@ class PlayerMemoryTests(unittest.TestCase):
         pointers = {
             0x100020: 0x4000,  # entity list
             0x100010: 0x5000,  # local controller
-            0x5874: 5,  # pawn handle
             0x4010: 0x7000,  # pawn list entry
-            0x7000 + 0x78 * 5: 0x8000,
+            0x7000 + 0x70 * 5: 0x8000,
         }
-        memory.pm = SimpleNamespace(read_longlong=Mock(side_effect=pointers.__getitem__))
+        memory.pm = SimpleNamespace(
+            read_longlong=Mock(side_effect=pointers.__getitem__), read_uint=Mock(return_value=5)
+        )
         self.assertEqual(memory.get_entity_base(0), (0x5000, 0x8000))
         self.assertEqual(memory.pm.read_longlong.call_args_list[0].args, (0x100020,))
         self.assertEqual(memory.pm.read_longlong.call_args_list[1].args, (0x100010,))
-        self.assertEqual(memory.pm.read_longlong.call_count, 5)
+        self.assertEqual(memory.pm.read_longlong.call_count, 4)
+        memory.pm.read_uint.assert_called_once_with(0x58c0)
+
+    def test_invalid_handle_does_not_resolve_world_entity(self):
+        for handle in (0, 0xffffffff, 0x7fff, 0x8000):
+            with self.subTest(handle=handle):
+                memory = DeadlockMemory.__new__(DeadlockMemory)
+                memory.client_base = 0x100000
+                memory.offsets = Offsets(0x10, 0, 0x20, 0)
+                pointers = {0x100020: 0x4000, 0x100010: 0x5000}
+                memory.pm = SimpleNamespace(
+                    read_longlong=Mock(side_effect=pointers.__getitem__),
+                    read_uint=Mock(return_value=handle),
+                )
+                with self.assertRaisesRegex(EntityUnavailable, "Pawn handle.*invalid"):
+                    memory.get_entity_base(0)
+                self.assertEqual(memory.pm.read_longlong.call_count, 2)
+
+    def test_controller_and_pawn_use_observed_stride(self):
+        memory = DeadlockMemory.__new__(DeadlockMemory)
+        memory.client_base = 0x100000
+        memory.offsets = Offsets(0x10, 0, 0x20, 0)
+        pointers = {
+            0x100020: 0x4000,
+            0x4010: 0x7000,
+            0x7000 + 0x70 * 3: 0x5000,
+            0x7000 + 0x70 * 52: 0x8000,
+        }
+        memory.pm = SimpleNamespace(
+            read_longlong=Mock(side_effect=pointers.__getitem__),
+            read_uint=Mock(return_value=0x14b0034),
+        )
+        self.assertEqual(memory.get_entity_base(3), (0x5000, 0x8000))
+        memory.pm.read_uint.assert_called_once_with(0x5000 + 0x8c0)
 
     def test_null_pointer_has_clear_error(self):
         memory = DeadlockMemory.__new__(DeadlockMemory)

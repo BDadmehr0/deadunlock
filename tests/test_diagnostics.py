@@ -87,6 +87,32 @@ class ReadOnlyDiagnosticsTests(unittest.TestCase):
         self.assertIn("local unavailable=15", output.getvalue())
         self.assertNotIn("-> candidate", output.getvalue())
 
+    def test_extended_scan_marks_candidates_outside_aim_range(self):
+        def read_entity(index):
+            if index == 0:
+                return {"hero": HeroIds.Paradox, "team": 2, "health": 1821}
+            if index == 52:
+                return {"hero": HeroIds.Wraith, "team": 3, "health": 500}
+            raise EntityUnavailable("not a player")
+
+        output = io.StringIO()
+        mem = SimpleNamespace(read_entity=Mock(side_effect=read_entity), set_angles=Mock())
+        report_players(mem, output, slots=64, show_unreadable=False)
+        text = output.getvalue()
+        self.assertIn("Slot 52: hero=Wraith team=3 health=500 -> candidate outside default scan", text)
+        self.assertIn("Additional unreadable slots omitted: 60", text)
+        self.assertIn("unreadable=63", text)
+        self.assertEqual(mem.read_entity.call_count, 65)
+        mem.set_angles.assert_not_called()
+
+    def test_extended_scan_is_bounded(self):
+        with self.assertRaisesRegex(ValueError, "between 1 and 2048"):
+            report_players(SimpleNamespace(), io.StringIO(), slots=2049)
+        with patch("sys.stderr", new_callable=io.StringIO):
+            with self.assertRaises(SystemExit) as exc:
+                main(["--slots", "0"])
+        self.assertEqual(exc.exception.code, 2)
+
     def test_main_uses_read_only_pid_and_closes_handle(self):
         process = SimpleNamespace(close=Mock())
         memory = SimpleNamespace(pm=process, read_entity=Mock(side_effect=OSError("no data")))

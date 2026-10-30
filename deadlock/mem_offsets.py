@@ -14,7 +14,10 @@ CAMERA_ROLL = 0x4C    # camera base -> roll (unused)
 HERO_ID_OFFSET = 0x908 + 0x1C  # m_PlayerDataGlobal -> m_nHeroID
 GAME_SCENE_NODE = 0x330  # pawn -> CGameSceneNode pointer
 NODE_POSITION = 0xD0     # CGameSceneNode -> position vector
-TEAM_OFFSET = 0x3F3      # controller -> team id
+# Observed team byte and hero pawn handle on one Proton build; may change.
+TEAM_OFFSET = 0x3EF      # controller -> uint8 team id
+PAWN_HANDLE_OFFSET = 0x8C0  # controller -> uint32 hero pawn handle
+ENTITY_LIST_ENTRY_STRIDE = 0x70  # observed entity slot size
 HEALTH_OFFSET = 0x354    # pawn -> health
 CAMERA_SERVICES = 0xf68  # pawn -> CPlayer_CameraServices
 PUNCH_ANGLE = 0x40       # CPlayer_CameraServices -> m_vecPunchAngle
