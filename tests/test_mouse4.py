@@ -50,7 +50,8 @@ class MouseFourTests(unittest.TestCase):
             next(side_states) if button == aim_button else button == 1
         )
         with patch("deadlock.aimbot.X11Input", return_value=device):
-            bot = Aimbot(mem, AimbotSettings(aim_button=aim_button))
+            settings = AimbotSettings(aim_button=aim_button, allow_approximate_fallback=True)
+            bot = Aimbot(mem, settings)
         sleeps = []
 
         def on_sleep(duration):

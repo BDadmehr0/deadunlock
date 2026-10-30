@@ -146,13 +146,64 @@ class SkeletonTests(unittest.TestCase):
 
     def test_aimbot_uses_named_bone_and_applies_global_head_offset(self):
         with patch("deadlock.aimbot.X11Input"):
-            bot = Aimbot(self.mem, AimbotSettings(head_vertical_offset=-10))
+            bot = Aimbot(self.mem, AimbotSettings(head_vertical_offset=-10,
+                                                allow_approximate_fallback=True))
         self.assertEqual(bot._automatic_target_position(self.mem.player, "head"),
                          (1000, 2000, 170))
         self.mem.ptr(self.mem.scene + 0x1d0, 0)
         with self.assertLogs("deadlock.aimbot", level="WARNING"):
             self.assertEqual(bot._automatic_target_position(self.mem.player, "head"),
                              (1000, 2000, 190))
+
+    def test_strict_mode_skips_fallback_then_recovers_when_skeleton_returns(self):
+        self.mem.ptr(self.mem.scene + 0x1d0, 0)
+        with patch("deadlock.aimbot.X11Input"):
+            bot = Aimbot(self.mem)
+        self.assertFalse(bot.settings.allow_approximate_fallback)
+        with patch("deadlock.aimbot.time.monotonic", return_value=0):
+            with self.assertLogs("deadlock.aimbot", level="WARNING") as logs:
+                self.assertIsNone(bot._automatic_target_position(self.mem.player, "head"))
+        self.assertIn("aiming paused", logs.output[0])
+        self.mem.ptr(self.mem.scene + 0x1d0, self.mem.pose)
+        with patch("deadlock.aimbot.time.monotonic", return_value=0.5):
+            self.assertIsNone(bot._automatic_target_position(self.mem.player, "head"))
+        with patch("deadlock.aimbot.time.monotonic", return_value=1.1):
+            self.assertEqual(bot._automatic_target_position(self.mem.player, "head"),
+                             (1000, 2000, 180))
+
+    def test_aimbot_loop_never_writes_angles_when_skeleton_missing(self):
+        from deadlock.memory import EntityUnavailable
+
+        local = {"hero": HeroIds.Abrams, "team": 2, "health": 500, "aim_angle": 0,
+                 "position": (900, 2000, 170)}
+        target = dict(self.mem.player, team=3, health=500)
+        self.mem.ptr(self.mem.scene + 0x1d0, 0)
+
+        def entity(index):
+            if index == 0:
+                return local
+            if index == 2:
+                return target
+            raise EntityUnavailable("empty")
+
+        self.mem.read_entity = Mock(side_effect=entity)
+        self.mem.camera_position = Mock(return_value=(900, 2000, 170))
+        self.mem.current_angles = Mock(return_value=(0, 0))
+        self.mem.set_angles = Mock()
+        with patch("deadlock.aimbot.X11Input"):
+            bot = Aimbot(self.mem)
+        bot.input.button_down.side_effect = lambda button: button == 8
+        with patch("deadlock.aimbot.time.sleep", side_effect=lambda _: bot.stop()):
+            with self.assertLogs("deadlock.aimbot", level="WARNING"):
+                bot.run()
+        self.mem.set_angles.assert_not_called()
+
+    def test_invalid_fallback_setting_is_rejected_before_x11(self):
+        for value in (None, "true", 1, 0):
+            with self.subTest(value=value), patch("deadlock.aimbot.X11Input") as device:
+                with self.assertRaisesRegex(ValueError, "Approximate fallback"):
+                    Aimbot(self.mem, AimbotSettings(allow_approximate_fallback=value))
+                device.assert_not_called()
 
     def test_aimbot_loop_uses_named_bone_for_target_hero(self):
         from deadlock.helpers import calculate_camera_rotation, calculate_new_camera_angles
@@ -182,10 +233,49 @@ class SkeletonTests(unittest.TestCase):
         expected = calculate_new_camera_angles(0, 0, yaw, -pitch, 5.0)
         self.mem.set_angles.assert_called_once_with(*expected, 0)
 
+    def test_aimbot_tracks_moving_bone_while_aim_is_held(self):
+        from deadlock.helpers import calculate_camera_rotation, calculate_new_camera_angles
+        from deadlock.memory import EntityUnavailable
+
+        local = {"hero": HeroIds.Abrams, "team": 2, "health": 500, "aim_angle": 0,
+                 "position": (900, 2000, 170)}
+        target = dict(self.mem.player, team=3, health=500)
+
+        def entity(index):
+            if index == 0:
+                return local
+            if index == 2:
+                return target
+            raise EntityUnavailable("empty")
+
+        self.mem.read_entity = Mock(side_effect=entity)
+        self.mem.camera_position = Mock(return_value=(900, 2000, 170))
+        self.mem.current_angles = Mock(return_value=(0, 0))
+        self.mem.set_angles = Mock()
+        with patch("deadlock.aimbot.X11Input"):
+            bot = Aimbot(self.mem)
+        bot.input.button_down.side_effect = lambda button: button == 8
+        frames = 0
+
+        def next_frame(_duration):
+            nonlocal frames
+            frames += 1
+            if frames == 1:
+                self.mem.position(1, (1000, 2000, 155))
+            else:
+                bot.stop()
+
+        with patch("deadlock.aimbot.time.sleep", side_effect=next_frame):
+            bot.run()
+        self.assertEqual(self.mem.set_angles.call_count, 2)
+        for call, z in zip(self.mem.set_angles.call_args_list, (180, 155)):
+            yaw, pitch = calculate_camera_rotation((900, 2000, 170), (1000, 2000, z))
+            self.assertEqual(call.args, calculate_new_camera_angles(0, 0, yaw, -pitch, 5.0) + (0,))
+
     def test_failed_zone_retry_does_not_block_other_zones(self):
         mem = FakeMemory(("pelvis", "head", "spine_2"))
         with patch("deadlock.aimbot.X11Input"):
-            bot = Aimbot(mem)
+            bot = Aimbot(mem, AimbotSettings(allow_approximate_fallback=True))
         with self.assertLogs("deadlock.aimbot", level="WARNING"):
             self.assertEqual(bot._automatic_target_position(mem.player, "legs"),
                              (1000, 2000, 130))

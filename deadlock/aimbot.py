@@ -26,6 +26,7 @@ from . import mem_offsets as mo
 
 logger = logging.getLogger(__name__)
 AIM_BUTTON = 8  # X11's usual side/back button, commonly called Mouse 4.
+DISTANCE_RESCAN_INTERVAL = 0.1  # Seconds between nearest-enemy scans while aiming.
 # Legacy estimates above the scene origin, not measured hitboxes.
 FALLBACK_ZONE_HEIGHTS = {"head": 100, "body": 70, "legs": 30}
 
@@ -64,9 +65,11 @@ class AimbotSettings:
     #: Additional head height in game units; negative values move aim down.
     hero_zone_heights: dict[str, dict[str, int]] = field(default_factory=dict)
     #: Per-target-hero fallback heights above the scene origin, in game units.
+    allow_approximate_fallback: bool = False
+    #: When false, do not aim if the requested skeleton bone cannot be read.
 
-    target_select_type: str = "fov"  # "distance" or "fov"
-    #: prioritisation strategy when selecting targets
+    target_select_type: str = "distance"  # "distance" or "fov"
+    #: Prioritise world-space distance or angular distance from the crosshair.
 
     smooth_speed: float = 5.0
     #: maximum angle change (degrees) per frame when locking on
@@ -138,6 +141,10 @@ class Aimbot:
         self.mem = mem
         self.skeleton = SkeletonReader(mem)
         self.settings = settings or AimbotSettings()
+        if self.settings.target_select_type not in ("distance", "fov"):
+            raise ValueError("Target selection must be distance or fov")
+        if type(self.settings.allow_approximate_fallback) is not bool:
+            raise ValueError("Approximate fallback setting must be true or false")
         button = self.settings.aim_button
         if isinstance(button, bool) or not isinstance(button, int) or button not in (8, 9):
             raise ValueError("Aim button must be X11 button 8 (Mouse 4) or 9 (Mouse 5)")
@@ -254,20 +261,38 @@ class Aimbot:
                 self._last_bad_bone_warning = now
             return fallback
 
-    def _automatic_target_position(self, target: dict, zone: str) -> tuple[float, float, float]:
-        """Use the target model's named bones, or the existing approximate fallback."""
+    def _unavailable_skeleton_position(
+        self, target: dict, zone: str, reason: str
+    ) -> tuple[float, float, float] | None:
+        """Skip aiming without a named bone unless estimated fallback is enabled."""
+        if self.settings.allow_approximate_fallback:
+            return self._target_position(target, None, zone, fallback_reason=reason)
+        now = time.monotonic()
+        if now - self._last_bad_bone_warning >= 5:
+            logger.warning(
+                "Skeleton unavailable for %s %s (%s); aiming paused for this target. "
+                "Run deadlock.skeleton_diagnostics; enable approximate fallback only if desired.",
+                getattr(target.get("hero"), "name", "unknown"), zone, reason,
+            )
+            self._last_bad_bone_warning = now
+        return None
+
+    def _automatic_target_position(
+        self, target: dict, zone: str
+    ) -> tuple[float, float, float] | None:
+        """Aim at named bones; use an approximation only when explicitly enabled."""
         key = (target.get("node"), zone)
         now = time.monotonic()
         retry = self._skeleton_retry.get(key)
         if retry and now < retry[0]:
-            return self._target_position(target, None, zone, fallback_reason=retry[1])
+            return self._unavailable_skeleton_position(target, zone, retry[1])
         try:
             snapshot = self.skeleton.read(target, zone)
         except SkeletonUnavailable as exc:
             if len(self._skeleton_retry) >= 64:
                 self._skeleton_retry.clear()
             self._skeleton_retry[key] = (now + 1.0, str(exc))
-            return self._target_position(target, None, zone, fallback_reason=str(exc))
+            return self._unavailable_skeleton_position(target, zone, str(exc))
         self._skeleton_retry.pop(key, None)
         resolved = (snapshot.model, snapshot.selected_name)
         if resolved not in self._reported_bones:
@@ -308,6 +333,7 @@ class Aimbot:
         hold_down_left_click = False
         waiting_for_local_player = False
         last_no_target_warning = float("-inf")
+        next_distance_scan = float("-inf")
         try:
             active = (
                 self.input.button_down(self.settings.aim_button)
@@ -334,6 +360,7 @@ class Aimbot:
                             self._last_lock_lost = time.time()
                         self.locked_on = None
                         prev_locked = None
+                        next_distance_scan = float("-inf")
                         self.force_aim_until = 0.0
                         self._zone_cache = None
                         self._paradox_next_e = 0.0
@@ -381,13 +408,21 @@ class Aimbot:
                         if self.locked_on is not None:
                             self._last_lock_lost = time.time()
                         self.locked_on = None
+                        next_distance_scan = float("-inf")
                         time.sleep(0.01)
                         continue
 
                     cam_pos = self.mem.camera_position()
                     current_yaw, current_pitch = self.mem.current_angles()
 
-                    if self.locked_on is None:
+                    now = time.monotonic()
+                    if ((self.settings.target_select_type == "distance"
+                         and now >= next_distance_scan)
+                            or (self.settings.target_select_type == "fov"
+                                and self.locked_on is None)):
+                        if self.settings.target_select_type == "distance":
+                            next_distance_scan = now + DISTANCE_RESCAN_INTERVAL
+                        previous_target = self.locked_on
                         target_idx = None
                         best_score = None
                         unreadable = same_team = dead = 0
@@ -410,9 +445,14 @@ class Aimbot:
                                 dx = my_data["position"][0] - data["position"][0]
                                 dy = my_data["position"][1] - data["position"][1]
                                 dz = my_data["position"][2] - data["position"][2]
-                                dist = (dx * dx + dy * dy + dz * dz) ** 0.5
-                                if best_score is None or dist < best_score:
-                                    best_score = dist
+                                distance_squared = dx * dx + dy * dy + dz * dz
+                                if not math.isfinite(distance_squared):
+                                    unreadable += 1
+                                    continue
+                                if (best_score is None or distance_squared < best_score
+                                        or (distance_squared == best_score
+                                            and i == previous_target)):
+                                    best_score = distance_squared
                                     target_idx = i
                             else:
                                 yaw, pitch = calculate_camera_rotation(cam_pos, data["position"])
@@ -441,9 +481,10 @@ class Aimbot:
                                     unreadable, same_team, dead, example_error or "none",
                                 )
                                 last_no_target_warning = now
-                        if self.locked_on is not None:
+                        if self.locked_on != previous_target:
                             self._zone_cache = None
-                            logger.debug("Locked on to entity %d", self.locked_on)
+                            if self.locked_on is not None:
+                                logger.debug("Locked on to entity %d", self.locked_on)
 
                     if prev_locked != self.locked_on:
                         if self.locked_on is None:
@@ -469,10 +510,21 @@ class Aimbot:
                         if self.locked_on is not None:
                             self._last_lock_lost = time.time()
                         self.locked_on = None
+                        next_distance_scan = float("-inf")
+                        continue
+                    if target["team"] == my_data["team"] or target["health"] <= 0:
+                        self._last_lock_lost = time.time()
+                        self.locked_on = None
+                        next_distance_scan = float("-inf")
+                        self._zone_cache = None
+                        time.sleep(0.01)
                         continue
 
                     zone = self._select_zone()
                     target_pos = self._automatic_target_position(target, zone)
+                    if target_pos is None:
+                        time.sleep(0.01)
+                        continue
 
                     # Gradually rotate the camera towards the desired angles for a
                     # slightly more human-like movement.

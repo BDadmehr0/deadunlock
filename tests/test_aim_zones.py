@@ -123,7 +123,7 @@ class ZoneSettingsTests(unittest.TestCase):
                     read_longlong=Mock(return_value=0), set_angles=Mock(),
                 )
                 with patch("deadlock.aimbot.X11Input"):
-                    bot = Aimbot(memory)
+                    bot = Aimbot(memory, AimbotSettings(allow_approximate_fallback=True))
                 bot.input.button_down.side_effect = lambda button: button == 8
                 bot._select_zone = Mock(return_value=zone)
                 with patch("deadlock.aimbot.time.sleep", side_effect=lambda _: bot.stop()):
@@ -157,7 +157,8 @@ class ZoneSettingsTests(unittest.TestCase):
             read_longlong=Mock(return_value=0), set_angles=Mock(),
         )
         settings = AimbotSettings(hero_zone_heights={"Ivy": {"head": 65},
-                                                      "Abrams": {"head": 110}})
+                                                      "Abrams": {"head": 110}},
+                                  allow_approximate_fallback=True)
         with patch("deadlock.aimbot.X11Input"):
             bot = Aimbot(memory, settings)
         bot.input.button_down.side_effect = lambda button: button == 8

@@ -16,7 +16,7 @@ class AimPositionTests(unittest.TestCase):
     def setUp(self):
         self.memory = SimpleNamespace(read_longlong=Mock(), read_float=Mock())
         with patch("deadlock.aimbot.X11Input"):
-            self.bot = Aimbot(self.memory)
+            self.bot = Aimbot(self.memory, AimbotSettings(allow_approximate_fallback=True))
         self.target = {"node": 0x1000, "position": (11685.875, -8528.0, -281.0625)}
 
     def test_nearby_bone_is_used(self):

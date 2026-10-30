@@ -58,17 +58,27 @@ fire. The old default is Mouse 4. Configured hero ability locks can also keep
 aim active without holding the button; right-click synthesizes left-click and
 suppresses aim. Button mappings vary: use `xev` to inspect yours.
 
+In **Settings → Target selection**, `distance` chooses the nearest living enemy
+in 3D world space and checks again every 0.1 seconds while aiming. Only slots
+1–15 are considered, including enemies behind walls or off-screen; there is no
+visibility check. `fov` selects by angular distance from the crosshair. Distance
+is the default for new settings, but an existing saved choice is preserved;
+select `distance` and Stop/Start if your saved setting is `fov`.
+
 **Aim Zones** sets head/body/legs weights and a global head adjustment. The
 experimental skeleton reader tries to resolve bone names from the target's model
 automatically. Its offsets are from a third-party build and are **not verified**
 on the current Proton game; a plausible position is not a verified hitbox. The
-game may not have refreshed a pose. Watch Logs for the selected name or fallback.
+game may not have refreshed a pose. Watch Logs for the selected bone or errors.
+By default, if the requested bone is unavailable or implausible, aiming is
+paused for that target instead of using a guessed height. The nearest target is
+still selected by the configured selection mode, even if its skeleton is missing.
 
-If model data or the requested bone is unavailable/implausible, **Hero Heights**
-provides per-target fallback heights above the scene origin (0–200 game units).
-Defaults of 100/70/30 are legacy estimates, not calibrated for all heroes. The
-global head adjustment also applies to named bones and fallbacks; set it to zero
-when testing the raw bone. Enable **Live Save** to
+To permit the old estimated fallback, enable **Aim Zones → Allow estimated aim
+when skeleton is unavailable**. **Hero Heights** sets those per-target estimates
+above the scene origin (0–200 game units); defaults of 100/70/30 are uncalibrated.
+The global head adjustment applies to both named bones and fallbacks; set it to
+zero when testing the raw bone. Enable **Live Save** to
 save valid panel changes to `deadlock/aimbot_settings.json` (next to the
 executable for packaged builds). Without Live Save, valid settings are still
 saved on Start or close. Saved edits do not change a running bot: **Stop** and
