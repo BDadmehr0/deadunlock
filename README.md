@@ -58,13 +58,17 @@ fire. The old default is Mouse 4. Configured hero ability locks can also keep
 aim active without holding the button; right-click synthesizes left-click and
 suppresses aim. Button mappings vary: use `xev` to inspect yours.
 
-**Aim Zones** sets head/body/legs weights and a global head adjustment. In
-**Hero Heights**, select the *target* hero and set separate head/body/legs
-fallback heights above its scene origin (0–200 game units). These values apply
-only when bone data is unavailable or implausible; the global head adjustment is
-also added to the head. Defaults of 100/70/30 are legacy estimates, **not
-calibrated for all heroes**. Tune each hero from observed in-game results;
-values are estimates, not verified hitboxes. Enable **Live Save** to
+**Aim Zones** sets head/body/legs weights and a global head adjustment. The
+experimental skeleton reader tries to resolve bone names from the target's model
+automatically. Its offsets are from a third-party build and are **not verified**
+on the current Proton game; a plausible position is not a verified hitbox. The
+game may not have refreshed a pose. Watch Logs for the selected name or fallback.
+
+If model data or the requested bone is unavailable/implausible, **Hero Heights**
+provides per-target fallback heights above the scene origin (0–200 game units).
+Defaults of 100/70/30 are legacy estimates, not calibrated for all heroes. The
+global head adjustment also applies to named bones and fallbacks; set it to zero
+when testing the raw bone. Enable **Live Save** to
 save valid panel changes to `deadlock/aimbot_settings.json` (next to the
 executable for packaged builds). Without Live Save, valid settings are still
 saved on Start or close. Saved edits do not change a running bot: **Stop** and
@@ -85,6 +89,11 @@ Standalone commands: `.venv/bin/python -m deadlock.aimbot_gui`,
 - For a **read-only** player report, run `.venv/bin/python -m deadlock.diagnostics
   --pid 12345 --slots 256`. Slots beyond 15 are diagnostic only; a candidate
   does not validate camera, bone, visibility or write offsets.
+- To probe the candidate skeleton offsets without writes or input, run
+  `.venv/bin/python -m deadlock.skeleton_diagnostics --pid 12345 --slot 0 --dump-names`
+  (replace the PID; slot 0 is local). Use an enemy slot from the player report
+  to inspect a target. Compare the printed positions while standing and moving;
+  a successful probe is not proof of accurate hitboxes or fresh animation data.
 - If process access is denied, inspect ptrace/LSM restrictions and
   `cat /proc/sys/kernel/yama/ptrace_scope`. If your security policy permits an
   administrator to temporarily set it to 0, restore its previous value after
