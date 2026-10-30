@@ -105,6 +105,13 @@ class ZoneGuiTests(unittest.TestCase):
                  patch.object(sys, "_MEIPASS", directory, create=True):
                 self.assertEqual(self.gui.get_build_sha(), "1234567")
 
+    def test_settings_frame_uses_default_and_restored_target_selection(self):
+        for selection in ("distance", "fov"):
+            with self.subTest(selection=selection):
+                self.app.settings.target_select_type = selection
+                self.app._build_settings_frame(Mock())
+                self.assertEqual(self.app.target_var.get(), selection)
+
     def test_settings_frame_restores_selected_aim_button(self):
         for button, label in ((8, "Mouse 4"), (9, "Mouse 5")):
             with self.subTest(button=button):
@@ -157,6 +164,14 @@ class ZoneGuiTests(unittest.TestCase):
         app.zone_entries["body"].state.assert_called_with(["!disabled"])
         app.zone_entries["legs"].state.assert_called_with(["disabled"])
         self.assertEqual(app.zone_weight_vars["body"].get(), "45")
+
+    def test_fallback_checkbox_restores_and_applies_preference(self):
+        self.assertFalse(self.app.allow_approximate_var.get())
+        self.app.allow_approximate_var.set(True)
+        self.app._apply_widget_values()
+        self.assertTrue(self.app.settings.allow_approximate_fallback)
+        self.app._build_zones_frame(Mock())
+        self.assertTrue(self.app.allow_approximate_var.get())
 
     def test_head_adjustment_is_validated_and_applied_in_both_modes(self):
         app = self.app

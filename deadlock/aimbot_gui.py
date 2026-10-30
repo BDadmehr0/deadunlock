@@ -324,6 +324,11 @@ class AimbotApp:
         ).grid(row=1, column=1, sticky="w", padx=8, pady=(6, 0))
         self.live_save_status = ttk.Label(frame, text="Live Save: off", foreground="#9ca3af")
         self.live_save_status.grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Label(
+            frame,
+            text="distance: nearest enemy; fov: closest to crosshair. Stop and Start to apply.",
+            wraplength=650,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         # Hero settings
         row += 1
@@ -426,6 +431,11 @@ class AimbotApp:
                  "Head/leg estimates are unverified; check Logs.",
             wraplength=680,
         ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        self.allow_approximate_var = tk.BooleanVar(value=self.settings.allow_approximate_fallback)
+        ttk.Checkbutton(
+            frame, text="Allow estimated aim when skeleton is unavailable",
+            variable=self.allow_approximate_var,
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(8, 0))
         self._update_zone_controls()
 
     def _build_hero_heights_frame(self, parent: ttk.Frame) -> None:
@@ -616,7 +626,11 @@ class AimbotApp:
             setattr(settings, f"{zone}_enabled", self.zone_enabled_vars[zone].get())
         settings.random_zones = random_zones
         settings.head_vertical_offset = head_offset
-        settings.target_select_type = self.target_var.get()
+        settings.allow_approximate_fallback = self.allow_approximate_var.get()
+        selection = self.target_var.get()
+        if selection not in ("distance", "fov"):
+            raise ValueError("Select distance or fov for target selection")
+        settings.target_select_type = selection
 
         settings.live_save = self.live_save_var.get()
         if self.combined:
@@ -640,7 +654,7 @@ class AimbotApp:
         """Watch all persisted panel fields after the widgets are initialized."""
         variables = [
             self.target_var, self.aim_button_var, self.random_zones_var, self.head_vertical_var,
-            self.grey_enabled, self.grey_key, self.yamato_enabled, self.yamato_key,
+            self.allow_approximate_var, self.grey_enabled, self.grey_key, self.yamato_enabled, self.yamato_key,
             self.vindicta_enabled, self.vindicta_key, self.paradox_enabled,
             self.paradox_r_key, self.paradox_e_key,
             *self.zone_enabled_vars.values(), *self.zone_weight_vars.values(),

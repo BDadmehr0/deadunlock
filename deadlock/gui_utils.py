@@ -31,6 +31,10 @@ def load_saved_settings() -> AimbotSettings:
         with open(SETTINGS_FILE, "r", encoding="utf-8") as fh:
             data = json.load(fh)
         settings = AimbotSettings(**data)
+        if settings.target_select_type not in ("distance", "fov"):
+            settings.target_select_type = "distance"
+        if type(settings.allow_approximate_fallback) is not bool:
+            settings.allow_approximate_fallback = False
         if type(settings.aim_button) is not int or settings.aim_button not in (8, 9):
             settings.aim_button = 8
         try:

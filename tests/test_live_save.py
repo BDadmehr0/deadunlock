@@ -67,6 +67,7 @@ class LiveSaveTests(unittest.TestCase):
         self.app.zone_enabled_vars["body"].set(True)
         self.app.zone_weight_vars["body"].set("40")
         self.app.head_vertical_var.set("-12")
+        self.app.allow_approximate_var.set(True)
         self.app.hero_height_vars["Ivy"]["head"].set("65")
         self.app.hero_height_vars["Abrams"]["body"].set("75")
         self.app.grey_enabled.set(True)
@@ -81,6 +82,7 @@ class LiveSaveTests(unittest.TestCase):
         self.assertTrue(data["body_enabled"])
         self.assertEqual(data["body_weight"], 40)
         self.assertEqual(data["head_vertical_offset"], -12)
+        self.assertTrue(data["allow_approximate_fallback"])
         self.assertEqual(data["hero_zone_heights"], {"Ivy": {"head": 65}, "Abrams": {"body": 75}})
         self.assertTrue(data["grey_talon_lock_enabled"])
         self.assertEqual(data["grey_talon_key"], ord("F"))
@@ -90,6 +92,7 @@ class LiveSaveTests(unittest.TestCase):
         self.assertFalse(loaded.esp_enabled)
         self.assertEqual(loaded.aim_button, 9)
         self.assertEqual(loaded.head_vertical_offset, -12)
+        self.assertTrue(loaded.allow_approximate_fallback)
         self.assertEqual(loaded.hero_zone_heights, {"Ivy": {"head": 65}, "Abrams": {"body": 75}})
         self.app.live_save_status.config.assert_called_with(
             text="Live Save: saved", foreground="#9ca3af"
@@ -221,11 +224,14 @@ class LiveSaveTests(unittest.TestCase):
         self.assertEqual(run_settings.head_vertical_offset, 0)
         self.app.head_vertical_var.set("-20")
         self.app.aim_button_var.set("Mouse 5")
+        self.app.allow_approximate_var.set(True)
         self.app.hero_height_vars["Ivy"]["head"].set("45")
         self.app.root.flush()
         self.assertEqual(self.data()["head_vertical_offset"], -20)
         self.assertEqual(self.data()["hero_zone_heights"]["Ivy"]["head"], 45)
         self.assertEqual(run_settings.hero_zone_heights["Ivy"]["head"], 65)
+        self.assertTrue(self.app.settings.allow_approximate_fallback)
+        self.assertFalse(run_settings.allow_approximate_fallback)
         self.assertEqual(self.app.settings.head_vertical_offset, -20)
         self.assertEqual(self.app.settings.aim_button, 9)
         self.assertEqual(run_settings.head_vertical_offset, 0)
@@ -236,10 +242,42 @@ class LiveSaveTests(unittest.TestCase):
         self.path.write_text('{"head_weight": 55}', encoding="utf-8")
         settings = self.gui.load_saved_settings()
         self.assertEqual(settings.head_weight, 55)
+        self.assertEqual(settings.target_select_type, "distance")
+        self.assertFalse(settings.allow_approximate_fallback)
         self.assertFalse(settings.live_save)
         self.assertTrue(settings.esp_enabled)
         self.assertEqual(settings.aim_button, 8)
         self.assertEqual(settings.hero_zone_heights, {})
+
+    def test_invalid_saved_fallback_flag_defaults_to_strict_without_losing_settings(self):
+        for value in ("true", 1, None):
+            with self.subTest(value=value):
+                data = {"allow_approximate_fallback": value, "head_weight": 55}
+                self.path.write_text(json.dumps(data), encoding="utf-8")
+                settings = self.gui.load_saved_settings()
+                self.assertFalse(settings.allow_approximate_fallback)
+                self.assertEqual(settings.head_weight, 55)
+
+    def test_saved_target_selection_is_preserved_and_invalid_selection_defaults_to_distance(self):
+        for choice, expected in (("fov", "fov"), ("distance", "distance"),
+                                 ("invalid", "distance"), (None, "distance")):
+            with self.subTest(choice=choice):
+                self.path.write_text(json.dumps({"target_select_type": choice, "head_weight": 55}),
+                                     encoding="utf-8")
+                settings = self.gui.load_saved_settings()
+                self.assertEqual(settings.target_select_type, expected)
+                self.assertEqual(settings.head_weight, 55)
+
+    def test_invalid_target_selection_preserves_last_live_save(self):
+        self.app.live_save_var.set(True)
+        previous = self.path.read_bytes()
+        self.app.target_var.set("unknown")
+        self.app.root.flush()
+        self.assertEqual(self.path.read_bytes(), previous)
+        self.assertIn("target selection", self.app.live_save_status.config.call_args.kwargs["text"])
+        self.app.target_var.set("distance")
+        self.app.root.flush()
+        self.assertEqual(self.data()["target_select_type"], "distance")
 
     def test_invalid_saved_hero_heights_keep_other_preferences(self):
         for value in (None, {"Ivy": {"head": "65"}}, {"Unknown": {"head": 10}}):
