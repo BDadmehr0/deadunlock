@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from deadlock.aimbot import AIM_BUTTON, Aimbot
+from deadlock.aimbot import AIM_BUTTON, Aimbot, AimbotSettings
 from deadlock.heroes import HeroIds
 from deadlock.memory import EntityUnavailable
 
@@ -12,7 +12,20 @@ from deadlock.memory import EntityUnavailable
 class MouseFourTests(unittest.TestCase):
     """Aim only while the mapped side button is held, absent ability locks."""
 
-    def test_release_stops_aim_even_if_left_button_is_held(self):
+    def test_mouse4_and_mouse5_activate_only_selected_button(self):
+        for button in (8, 9):
+            with self.subTest(button=button):
+                self._run_release_scenario(button)
+
+    def test_default_and_invalid_buttons(self):
+        self.assertEqual(AimbotSettings().aim_button, AIM_BUTTON)
+        for value in (7, 10, True, 8.0, "9"):
+            with self.subTest(value=value), patch("deadlock.aimbot.X11Input") as device:
+                with self.assertRaisesRegex(ValueError, "Aim button"):
+                    Aimbot(Mock(), AimbotSettings(aim_button=value))
+                device.assert_not_called()
+
+    def _run_release_scenario(self, aim_button):
         local = {"hero": HeroIds.Wraith, "team": 2, "health": 730, "aim_angle": 0,
                  "position": (100, 100, 70)}
         target = {"hero": HeroIds.Abrams, "team": 3, "health": 373, "node": 0x1000,
@@ -34,10 +47,10 @@ class MouseFourTests(unittest.TestCase):
         device = Mock()
         side_states = iter((False, True, False))  # initial, first loop, second loop
         device.button_down.side_effect = lambda button: (
-            next(side_states) if button == AIM_BUTTON else button == 1
+            next(side_states) if button == aim_button else button == 1
         )
         with patch("deadlock.aimbot.X11Input", return_value=device):
-            bot = Aimbot(mem)
+            bot = Aimbot(mem, AimbotSettings(aim_button=aim_button))
         sleeps = []
 
         def on_sleep(duration):

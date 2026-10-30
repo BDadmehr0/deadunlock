@@ -18,10 +18,10 @@ class X11Input:
             if not self.display.has_extension("XTEST"):
                 raise RuntimeError("The X11 server does not provide the XTEST extension")
             if not self.display.has_extension("XInputExtension"):
-                raise RuntimeError("Mouse 4 requires the XInput2 extension on the X11 server")
+                raise RuntimeError("Mouse 4/5 requires the XInput2 extension on the X11 server")
             version = self.display.xinput_query_version()
             if version.major_version < 2:
-                raise RuntimeError("Mouse 4 requires XInput version 2 or newer")
+                raise RuntimeError("Mouse 4/5 requires XInput version 2 or newer")
             self.root = self.display.screen().root
         except Exception:
             self.display.close()
@@ -37,7 +37,7 @@ class X11Input:
         return bool(keys[code // 8] & (1 << (code % 8)))
 
     def button_down(self, button: int) -> bool:
-        """Check an X11 button: 1 left, 3 right, or 8 for the usual Mouse 4.
+        """Check X11 buttons 1/3 (left/right) or 8/9 (usual Mouse 4/5).
 
         Core X11 pointer masks stop at button 5. XInput2 reports the mapped
         button state for master pointers, including side buttons.
@@ -45,7 +45,7 @@ class X11Input:
         if button in (1, 3):
             mask = {1: X.Button1Mask, 3: X.Button3Mask}[button]
             return bool(self.root.query_pointer().mask & mask)
-        if button != 8:
+        if button not in (8, 9):
             raise ValueError(f"Unsupported X11 button {button}")
         devices = self.display.xinput_query_device(xinput.AllMasterDevices).devices
         for device in devices:

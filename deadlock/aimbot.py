@@ -89,6 +89,11 @@ class AimbotSettings:
     headshot_on_acquire: bool = True
     #: Legacy setting retained for loading old configuration files; no longer used.
 
+    live_save: bool = False
+    esp_enabled: bool = True
+    aim_button: int = AIM_BUTTON
+    #: GUI preferences and X11 aim button (8 for Mouse 4, 9 for Mouse 5).
+
     def zone_weights(self) -> dict[str, int]:
         """Return manual weights for enabled zones, rejecting invalid settings."""
         weights = {}
@@ -111,6 +116,9 @@ class Aimbot:
 
         self.mem = mem
         self.settings = settings or AimbotSettings()
+        button = self.settings.aim_button
+        if isinstance(button, bool) or not isinstance(button, int) or button not in (8, 9):
+            raise ValueError("Aim button must be X11 button 8 (Mouse 4) or 9 (Mouse 5)")
         offset = self.settings.head_vertical_offset
         if isinstance(offset, bool) or not isinstance(offset, int) or not -100 <= offset <= 100:
             raise ValueError("Head vertical adjustment must be an integer from -100 to 100")
@@ -234,14 +242,18 @@ class Aimbot:
     def run(self) -> None:
         """Main aimbot loop."""
 
-        logger.info("Aimbot loop started - hold Mouse 4 (X11 button 8) to aim")
+        logger.info("Aimbot loop started - hold Mouse %d (X11 button %d) to aim",
+                    self.settings.aim_button - 4, self.settings.aim_button)
         log_state_changes = False
         prev_locked = None
         hold_down_left_click = False
         waiting_for_local_player = False
         last_no_target_warning = float("-inf")
         try:
-            active = self.input.button_down(AIM_BUTTON) or time.time() < self.force_aim_until
+            active = (
+                self.input.button_down(self.settings.aim_button)
+                or time.time() < self.force_aim_until
+            )
             while not self.stop_requested:
                 try:
                     # Check if paused
@@ -295,7 +307,8 @@ class Aimbot:
                     my_aim_angle = my_data["aim_angle"]
 
                     mouse_down = (
-                        self.input.button_down(AIM_BUTTON) or time.time() < self.force_aim_until
+                        self.input.button_down(self.settings.aim_button)
+                        or time.time() < self.force_aim_until
                     )
                     if not log_state_changes and not mouse_down:
                         log_state_changes = True
@@ -305,7 +318,7 @@ class Aimbot:
                         if log_state_changes:
                             logger.info("Aimbot turned %s", "on" if active else "off")
                     if not mouse_down:
-                        # Mouse 4 is not held and no ability lock is active.
+                        # The aim button is not held and no ability lock is active.
                         if self.locked_on is not None:
                             self._last_lock_lost = time.time()
                         self.locked_on = None

@@ -14,12 +14,19 @@ class Variable:
 
     def __init__(self, value=None):
         self.value = value
+        self.callbacks = []
 
     def get(self):
         return self.value
 
     def set(self, value):
         self.value = value
+        for callback in self.callbacks:
+            callback("name", "", "write")
+
+    def trace_add(self, _mode, callback):
+        self.callbacks.append(callback)
+        return str(len(self.callbacks))
 
 
 class ZoneGuiTests(unittest.TestCase):
@@ -35,6 +42,8 @@ class ZoneGuiTests(unittest.TestCase):
             Label=Mock(side_effect=lambda *a, **k: Mock()),
             Checkbutton=Mock(side_effect=lambda *a, **k: Mock()),
             Spinbox=Mock(side_effect=lambda *a, **k: Mock()),
+            Combobox=Mock(side_effect=lambda *a, **k: Mock()),
+            Entry=Mock(side_effect=lambda *a, **k: Mock()),
         )
         tk.messagebox = Mock()
         tk.scrolledtext = Mock()
@@ -45,12 +54,23 @@ class ZoneGuiTests(unittest.TestCase):
     def setUp(self):
         self.app = self.gui.AimbotApp.__new__(self.gui.AimbotApp)
         self.app.settings = self.gui.AimbotSettings()
+        self.app.combined = False
+        self.app.live_save_var = Variable(False)
+        self.app.live_save_status = Mock()
+        self.app._live_save_job = None
+        self.app.root = Mock()
+        self.app.log_queue = Mock()
         self.app._build_zones_frame(Mock())
         for name in ("target_var", "grey_enabled", "grey_key", "yamato_enabled", "yamato_key",
                      "vindicta_enabled", "vindicta_key", "paradox_enabled", "paradox_r_key",
                      "paradox_e_key"):
             setattr(self.app, name, Variable(""))
         self.app.target_var.set("fov")
+        self.app.aim_button_var = Variable("Mouse 4")
+        for name, value in (("grey_key", "Q"), ("yamato_key", "Q"),
+                            ("vindicta_key", "R"), ("paradox_r_key", "R"),
+                            ("paradox_e_key", "E")):
+            getattr(self.app, name).set(value)
 
     def test_gui_startup_does_not_check_for_updates_or_open_browser(self):
         self.tk.messagebox.reset_mock()
@@ -83,6 +103,13 @@ class ZoneGuiTests(unittest.TestCase):
             with patch.object(sys, "frozen", True, create=True), \
                  patch.object(sys, "_MEIPASS", directory, create=True):
                 self.assertEqual(self.gui.get_build_sha(), "1234567")
+
+    def test_settings_frame_restores_selected_aim_button(self):
+        for button, label in ((8, "Mouse 4"), (9, "Mouse 5")):
+            with self.subTest(button=button):
+                self.app.settings.aim_button = button
+                self.app._build_settings_frame(Mock())
+                self.assertEqual(self.app.aim_button_var.get(), label)
 
     def test_random_disables_custom_and_restores_it(self):
         app = self.app
