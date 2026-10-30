@@ -127,19 +127,28 @@ apply on Start. Random mode disables manual controls and generates new weights
 for all three zones each time the bot starts; the weights are shown in Logs.
 Manual settings are retained when switching modes. The old headshot probability
 and headshot-on-acquire settings are retained for loading old files but no
-longer control targeting. By default, only head is enabled.
+longer control targeting. By default, only head is enabled. The separate
+**Head height adjustment** changes head aim vertically in game units (negative
+values lower it), whether using a bone or the height estimate. It is saved with
+the settings and applies after Stop and Start, including in random mode.
 
-The scene-origin offset was observed on one Proton build. Unreadable, zero,
-non-finite or implausibly distant bone coordinates cause a warning and a rough
+The scene-origin offset was observed on one Proton build. The default head
+fallback is an unverified 100 game units above the origin, reduced from 130
+following a report that head aim was too high; it may still need adjustment.
+Unreadable, zero, non-finite or implausibly distant bone coordinates cause a warning and a rough
 height-based estimate for the selected zone. No verified leg bone is available,
 so legs always use an estimate. These estimates are not hitboxes, and a plausible
 bone coordinate does not prove it is correct. Head/body bone indices, estimates,
 camera angles and writes still require live validation; headshots are not
 guaranteed. No wall or visibility check is performed.
 
-The command-line aimbot and ESP accept `--debug`. The aimbot uses the left
-mouse button to aim; the right button synthesizes a left click without aiming.
-Map alternate fire in the game so the right button does not conflict. The GUI
+The command-line aimbot and ESP accept `--debug`. Hold Mouse 4 (normally the
+side/back button, X11 button 8) to aim; left-click fires independently. The
+right button still synthesizes a left click without aiming. Configured hero
+ability locks can also keep aim active without Mouse 4. Map alternate fire in
+the game so the right button does not conflict. Mouse 4 requires XInput2 and
+its mapping depends on the mouse and desktop; `xev` can show the X11 button
+number. Wayland/Xwayland may not deliver global button state reliably. The GUI
 allows changing the hero ability hotkeys. X11 key mappings are used for these
 single-character keys. Synthetic inputs and game input handling depend on the
 X server and Proton setup.

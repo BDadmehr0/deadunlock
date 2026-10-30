@@ -71,7 +71,7 @@ class AimPositionTests(unittest.TestCase):
         self.memory.read_longlong.return_value = 0x4000
         self.memory.read_float.return_value = 0.0
         self.bot._zone_weights = {"body": 1}
-        self.bot.input.button_down.side_effect = lambda button: button == 1
+        self.bot.input.button_down.side_effect = lambda button: button == 8
 
         def stop_on_sleep(_seconds):
             self.bot.stop()

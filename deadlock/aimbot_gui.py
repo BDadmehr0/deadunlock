@@ -11,7 +11,6 @@ presenting a cleaner, more professional experience.
 import logging
 import os
 import queue
-import sys
 import threading
 import tkinter as tk
 from tkinter import messagebox, scrolledtext, ttk
@@ -25,7 +24,6 @@ from .gui_utils import (
     save_settings,
     get_build_sha,
 )
-from .update_checker import update_available, open_release_page
 
 
 
@@ -78,46 +76,11 @@ class AimbotApp:
         self._build_widgets()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        # Start log processing and do initial update check
         self._process_log_queue()
-        self._notify_if_outdated()
-
-    def _notify_if_outdated(self) -> None:
-        """Show a warning dialog if the local repo is outdated."""
-        if update_available():
-            result = messagebox.askyesno(
-                "Update available",
-                "A newer DeadUnlock version is available. Open the download page?",
-            )
-            if result:
-                open_release_page()
-
-
-    def _check_for_updates(self) -> None:
-        """Manually check for updates and offer to update if available."""
-        try:
-            if update_available():
-                result = messagebox.askyesno(
-                    "Update Available",
-                    "A newer DeadUnlock version is available. Open the download page?",
-                )
-                if result:
-                    open_release_page()
-            else:
-                messagebox.showinfo(
-                    "No Updates",
-                    "You are running the latest version of DeadUnlock.",
-                )
-        except Exception as e:
-            messagebox.showerror(
-                "Update Check Failed",
-                f"Failed to check for updates: {e}"
-            )
 
     def _build_widgets(self) -> None:
         """Create and arrange the GUI widgets."""
         self._configure_style()
-        self._create_menu()
 
         # Root grid: header, notebook, statusbar
         self.root.columnconfigure(0, weight=1)
@@ -244,17 +207,6 @@ class AimbotApp:
             self.root.configure(bg="#0f1115")
         except Exception:
             pass
-
-    def _create_menu(self) -> None:
-        """Create the application menubar."""
-        menubar = tk.Menu(self.root)
-        self.root.config(menu=menubar)
-
-        help_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Help", menu=help_menu)
-        help_menu.add_command(
-            label="Check for Updates", command=self._check_for_updates
-        )
 
     def _build_header(self) -> None:
         """Create the top header with title and primary controls."""
@@ -439,11 +391,19 @@ class AimbotApp:
             entry.grid(row=row, column=1, sticky="w", padx=(8, 0))
             self.zone_checks[zone] = check
             self.zone_entries[zone] = entry
+        ttk.Label(frame, text="Head height adjustment (game units)").grid(
+            row=6, column=0, sticky="w", pady=(12, 0)
+        )
+        self.head_vertical_var = tk.StringVar(value=str(self.settings.head_vertical_offset))
+        ttk.Spinbox(frame, from_=-100, to=100, textvariable=self.head_vertical_var, width=8).grid(
+            row=6, column=1, sticky="w", padx=(8, 0), pady=(12, 0)
+        )
         ttk.Label(
             frame,
-            text="Settings apply on Start. Head/leg estimates are unverified; check Logs.",
+            text="Negative moves head aim down. Stop and Start to apply changes. "
+                 "Head/leg estimates are unverified; check Logs.",
             wraplength=680,
-        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(8, 0))
         self._update_zone_controls()
 
     def _update_zone_controls(self) -> None:
@@ -536,6 +496,12 @@ class AimbotApp:
     def _apply_widget_values(self) -> None:
         """Validate and update settings from widget values."""
         random_zones = self.random_zones_var.get()
+        try:
+            head_offset = int(self.head_vertical_var.get())
+            if not -100 <= head_offset <= 100:
+                raise ValueError
+        except ValueError as exc:
+            raise ValueError("Head height adjustment must be an integer from -100 to 100") from exc
         weights = {}
         for zone, variable in self.zone_weight_vars.items():
             try:
@@ -558,6 +524,7 @@ class AimbotApp:
             setattr(self.settings, f"{zone}_weight", weight)
             setattr(self.settings, f"{zone}_enabled", self.zone_enabled_vars[zone].get())
         self.settings.random_zones = random_zones
+        self.settings.head_vertical_offset = head_offset
         self.settings.target_select_type = self.target_var.get()
 
         self.settings.grey_talon_lock_enabled = self.grey_enabled.get()
@@ -623,19 +590,6 @@ class AimbotApp:
         save_settings(self.settings)
 
         try:
-            # For binary releases, update check is handled in _notify_if_outdated
-            # For source installations, we can still do a quick check here
-            if not getattr(sys, 'frozen', False):
-                # Show a simple progress dialog for source updates too
-                if update_available():
-                    result = messagebox.askyesno(
-                        "Update Available",
-                        "A newer version is available. Open the download page?",
-                    )
-                    if result:
-                        open_release_page()
-                        return
-
             if self.bot_thread and self.bot_thread.is_alive():
                 messagebox.showinfo("Please wait", "The previous aimbot is still stopping.")
                 return

@@ -203,6 +203,39 @@ class SignatureTests(unittest.TestCase):
 class InputTests(unittest.TestCase):
     """Test input mapping without a live X server."""
 
+    def test_mouse_four_uses_xinput_button_eight_state(self):
+        from Xlib.ext import xinput
+
+        button_state = xinput.ButtonState("state")
+        pressed, _ = button_state.parse_binary_value(struct.pack("=I", 1 << 8), None, 12, None)
+        released, _ = button_state.parse_binary_value(struct.pack("=I", 0), None, 12, None)
+        unrelated, _ = button_state.parse_binary_value(struct.pack("=I", 1 << 7), None, 12, None)
+        info = SimpleNamespace(type=xinput.ButtonClass, state=pressed)
+        master = SimpleNamespace(use=xinput.MasterPointer, enabled=True, classes=[info])
+        keyboard = SimpleNamespace(use=xinput.MasterKeyboard, enabled=True, classes=[info])
+        device = X11Input.__new__(X11Input)
+        device.display = SimpleNamespace(xinput_query_device=lambda _id: SimpleNamespace(
+            devices=[keyboard, master]
+        ))
+        self.assertTrue(device.button_down(8))
+        info.state = released
+        self.assertFalse(device.button_down(8))
+        info.state = unrelated
+        self.assertFalse(device.button_down(8))
+        info.state = pressed
+        master.enabled = False
+        self.assertFalse(device.button_down(8))
+        with self.assertRaises(ValueError):
+            device.button_down(4)
+
+    def test_xinput_two_is_required_and_connection_closed_on_failure(self):
+        display = unittest.mock.Mock()
+        display.has_extension.side_effect = lambda name: name == "XTEST"
+        with patch("deadlock.linux_input.display.Display", return_value=display):
+            with self.assertRaisesRegex(RuntimeError, "XInput2"):
+                X11Input()
+        display.close.assert_called_once()
+
     def test_input_state_and_events(self):
         class FakeDisplay:
             def keysym_to_keycode(self, symbol):
@@ -245,7 +278,7 @@ class AimbotCleanupTests(unittest.TestCase):
                 self.right_checks = 0
 
             def button_down(self, button):
-                if button == 1:
+                if button == 8:
                     return False
                 self.right_checks += 1
                 if self.right_checks == 1:
