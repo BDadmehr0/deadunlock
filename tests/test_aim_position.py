@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from deadlock.aimbot import Aimbot
+from deadlock.aimbot import Aimbot, AimbotSettings
 from deadlock.helpers import calculate_camera_rotation, calculate_new_camera_angles
 from deadlock.heroes import HeroIds
 from deadlock.memory import EntityUnavailable
@@ -46,7 +46,8 @@ class AimPositionTests(unittest.TestCase):
                                      self.target["position"])
 
     def test_unknown_bone_uses_fallback_without_read(self):
-        self.assertEqual(self.bot._target_position(self.target, None), self.target["position"])
+        with self.assertLogs("deadlock.aimbot", level="WARNING"):
+            self.assertEqual(self.bot._target_position(self.target, None), self.target["position"])
         self.memory.read_longlong.assert_not_called()
 
     def test_loop_aims_at_centre_instead_of_zero_bone(self):
@@ -69,6 +70,7 @@ class AimPositionTests(unittest.TestCase):
         self.memory.set_angles = Mock()
         self.memory.read_longlong.return_value = 0x4000
         self.memory.read_float.return_value = 0.0
+        self.bot._zone_weights = {"body": 1}
         self.bot.input.button_down.side_effect = lambda button: button == 1
 
         def stop_on_sleep(_seconds):

@@ -31,8 +31,16 @@ logger = logging.getLogger(__name__)
 class AimbotSettings:
     """Configuration for :class:`Aimbot`."""
 
+    # Retained for loading old settings files; zone weights replace both options.
     headshot_probability: float = 0.25
-    #: chance to aim at the enemy's head instead of centre mass
+
+    random_zones: bool = False
+    head_enabled: bool = True
+    body_enabled: bool = False
+    legs_enabled: bool = False
+    head_weight: int = 100
+    body_weight: int = 25
+    legs_weight: int = 25
 
     target_select_type: str = "fov"  # "distance" or "fov"
     #: prioritisation strategy when selecting targets
@@ -77,7 +85,20 @@ class AimbotSettings:
     #: key automatically pressed after ``paradox_r_key``
 
     headshot_on_acquire: bool = True
-    #: force headshots for 0.4s when locking on after a 2s gap
+    #: Legacy setting retained for loading old configuration files; no longer used.
+
+    def zone_weights(self) -> dict[str, int]:
+        """Return manual weights for enabled zones, rejecting invalid settings."""
+        weights = {}
+        for zone in ("head", "body", "legs"):
+            value = getattr(self, f"{zone}_weight")
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
+                raise ValueError(f"{zone.title()} weight must be an integer from 0 to 100")
+            if getattr(self, f"{zone}_enabled") and value:
+                weights[zone] = value
+        if not weights:
+            raise ValueError("Select at least one zone with a positive weight")
+        return weights
 
 
 class Aimbot:
@@ -87,19 +108,23 @@ class Aimbot:
         """Create a new aimbot bound to ``mem``."""
 
         self.mem = mem
-        self.input = X11Input()
         self.settings = settings or AimbotSettings()
+        self._zone_weights = (
+            {zone: random.randint(1, 100) for zone in ("head", "body", "legs")}
+            if self.settings.random_zones else self.settings.zone_weights()
+        )
+        self.input = X11Input()
         self.locked_on: int | None = None
         self.force_aim_until: float = 0.0
         self.paused = False
         self.stop_requested = False
 
-        # Headshot decision caching
-        self._headshot_cache: bool = False
-        self._headshot_cache_time: float = 0.0
-        self._headshot_cache_interval: float = 0.4
+        # Cache the zone briefly to avoid switching on every frame.
+        self._zone_cache: str | None = None
+        self._zone_cache_time = float("-inf")
+        self._zone_cache_interval = 0.4
+        logger.info("Aim zone weights for this run: %s", self._zone_weights)
 
-        self._force_head_until: float = 0.0
         self._last_lock_lost: float = 0.0
         self._last_bad_bone_warning: float = float("-inf")
 
@@ -141,28 +166,27 @@ class Aimbot:
             logger.debug("Paradox shortcut triggered")
             self._paradox_next_e = 0.0
 
-    def should_aim_for_head(self) -> bool:
-        """Return ``True`` if the bot should attempt a headshot.
+    def _select_zone(self) -> str:
+        """Choose a zone according to its weight, holding the choice briefly."""
+        now = time.monotonic()
+        if self._zone_cache is None or now - self._zone_cache_time >= self._zone_cache_interval:
+            self._zone_cache = random.choices(
+                list(self._zone_weights), weights=list(self._zone_weights.values()), k=1
+            )[0]
+            self._zone_cache_time = now
+        return self._zone_cache
 
-        Caches the random decision for 0.4 seconds to avoid frequent changes.
-        """
-        current_time = time.time()
-
-        if self.settings.headshot_on_acquire and current_time < self._force_head_until:
-            return True
-
-        if current_time - self._headshot_cache_time >= self._headshot_cache_interval:
-            self._headshot_cache = random.random() < self.settings.headshot_probability
-            self._headshot_cache_time = current_time
-
-        return self._headshot_cache
-
-    def _target_position(self, target: dict, bone_index: int | None) -> tuple[float, float, float]:
-        """Use a plausible bone position, otherwise approximate the player's centre mass."""
-        fallback = target["position"]
-        if bone_index is None:
-            return fallback
+    def _target_position(
+        self, target: dict, bone_index: int | None, zone: str = "body"
+    ) -> tuple[float, float, float]:
+        """Use a plausible bone or an unverified height estimate for the chosen zone."""
+        centre = target["position"]
+        # Player position is currently origin + 70; these estimates are not hitboxes.
+        height_delta = {"head": 60, "body": 0, "legs": -40}[zone]
+        fallback = (centre[0], centre[1], centre[2] + height_delta)
         try:
+            if bone_index is None:
+                raise ValueError(f"no {zone} bone index")
             bone_array = self.mem.read_longlong(target["node"] + mo.BONE_ARRAY)
             if not bone_array:
                 raise ValueError("null bone array")
@@ -177,8 +201,8 @@ class Aimbot:
             now = time.monotonic()
             if now - self._last_bad_bone_warning >= 5:
                 logger.warning(
-                    "Bone data unavailable or implausible (%s); using approximate centre mass. "
-                    "Headshots and offsets are not validated.", exc
+                    "Bone data unavailable or implausible (%s); using approximate %s height. "
+                    "Hit zones and offsets are not validated.", exc, zone
                 )
                 self._last_bad_bone_warning = now
             return fallback
@@ -231,7 +255,7 @@ class Aimbot:
                         self.locked_on = None
                         prev_locked = None
                         self.force_aim_until = 0.0
-                        self._force_head_until = 0.0
+                        self._zone_cache = None
                         self._paradox_next_e = 0.0
                         self._paradox_r_held = False
                         if not waiting_for_local_player:
@@ -335,10 +359,7 @@ class Aimbot:
                                 )
                                 last_no_target_warning = now
                         if self.locked_on is not None:
-                            if time.time() - self._last_lock_lost > 2:
-                                self._force_head_until = (
-                                    time.time() + self._headshot_cache_interval
-                                )
+                            self._zone_cache = None
                             logger.debug("Locked on to entity %d", self.locked_on)
 
                     if prev_locked != self.locked_on:
@@ -367,12 +388,14 @@ class Aimbot:
                         self.locked_on = None
                         continue
 
-                    bone_index = (
-                        get_head_bone_index(target["hero"])
-                        if self.should_aim_for_head()
-                        else get_body_bone_index(target["hero"])
-                    )
-                    target_pos = self._target_position(target, bone_index)
+                    zone = self._select_zone()
+                    bone_index = {
+                        "head": get_head_bone_index,
+                        "body": get_body_bone_index,
+                        # No verified leg indices are available yet.
+                        "legs": lambda _hero: None,
+                    }[zone](target["hero"])
+                    target_pos = self._target_position(target, bone_index, zone)
 
                     # Gradually rotate the camera towards the desired angles for a
                     # slightly more human-like movement.

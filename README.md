@@ -106,12 +106,23 @@ every failed slot. The process still requires read permission under
 ptrace/Yama. A reported candidate does not validate the camera, bone indices,
 game offsets, or writes.
 
-The scene-origin offset was observed on one Proton build. When a bone position
-is unreadable, zero, non-finite, or more than 150 game units from the estimated
-player centre, the aimbot warns and uses that estimated centre instead. This
-sanity check does not prove a bone is correct: head/body bone indices, camera
-angles, the estimated centre, and writes still require live validation. The
-fallback cannot guarantee headshots. No wall or visibility check is performed.
+In the GUI's **Aim Zones** tab, select head, body, and/or legs and assign each
+one a relative weight from 0 to 100. For example, 70/20/10 gives those zones
+70%/20%/10% selection probabilities when all three are enabled. At least one
+enabled weight must be positive. The choice is held for 0.4 seconds; settings
+apply on Start. Random mode disables manual controls and generates new weights
+for all three zones each time the bot starts; the weights are shown in Logs.
+Manual settings are retained when switching modes. The old headshot probability
+and headshot-on-acquire settings are retained for loading old files but no
+longer control targeting. By default, only head is enabled.
+
+The scene-origin offset was observed on one Proton build. Unreadable, zero,
+non-finite or implausibly distant bone coordinates cause a warning and a rough
+height-based estimate for the selected zone. No verified leg bone is available,
+so legs always use an estimate. These estimates are not hitboxes, and a plausible
+bone coordinate does not prove it is correct. Head/body bone indices, estimates,
+camera angles and writes still require live validation; headshots are not
+guaranteed. No wall or visibility check is performed.
 
 The command-line aimbot and ESP accept `--debug`. The aimbot uses the left
 mouse button to aim; the right button synthesizes a left click without aiming.

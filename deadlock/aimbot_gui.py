@@ -204,10 +204,16 @@ class AimbotApp:
                         },
                     },
                     "TCheckbutton": {
-                        "configure": {"background": bg, "foreground": fg, "padding": (2, 2)}
+                        "configure": {"background": bg, "foreground": fg, "padding": (2, 2)},
+                        "map": {"foreground": [("disabled", muted)]},
                     },
                     "TEntry": {
-                        "configure": {"fieldbackground": surface, "foreground": fg}
+                        "configure": {"fieldbackground": surface, "foreground": fg},
+                        "map": {"foreground": [("disabled", muted)]},
+                    },
+                    "TSpinbox": {
+                        "configure": {"fieldbackground": surface, "foreground": fg},
+                        "map": {"foreground": [("disabled", muted)]},
                     },
                     "TCombobox": {
                         "configure": {
@@ -292,12 +298,15 @@ class AimbotApp:
         self.notebook.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 8))
 
         settings_tab = ttk.Frame(self.notebook, padding=10)
+        zones_tab = ttk.Frame(self.notebook, padding=10)
         log_tab = ttk.Frame(self.notebook, padding=10)
 
         self.notebook.add(settings_tab, text="Settings")
+        self.notebook.add(zones_tab, text="Aim Zones")
         self.notebook.add(log_tab, text="Logs")
 
         self._build_settings_frame(settings_tab)
+        self._build_zones_frame(zones_tab)
         self._build_log_frame(log_tab)
 
     def _build_statusbar(self) -> None:
@@ -322,42 +331,6 @@ class AimbotApp:
         frame.columnconfigure(1, weight=1)
 
         row = 0
-        ttk.Label(frame, text="Headshot probability").grid(row=row, column=0, sticky="w")
-        self.headshot_var = tk.DoubleVar(value=self.settings.headshot_probability)
-        self.headshot_percent = ttk.Label(frame, text=f"{int(self.headshot_var.get()*100)}%")
-        self.headshot_percent.grid(row=row, column=2, sticky="e")
-        hs_scale = ttk.Scale(
-            frame,
-            variable=self.headshot_var,
-            from_=0.0,
-            to=1.0,
-            orient=tk.HORIZONTAL,
-            length=220,
-            command=lambda _evt=None: self._on_headshot_change(),
-        )
-        hs_scale.grid(row=row, column=1, sticky="ew", padx=8)
-
-        self.headshot_warning = ttk.Label(
-            frame,
-            text="High headshot values may flag your account!",
-            foreground="red",
-        )
-        row += 1
-        self.headshot_warning.grid(row=row, column=0, columnspan=3, sticky="w", pady=(4, 0))
-        self.headshot_warning.grid_remove()
-        self._update_headshot_warning()
-
-        row += 1
-        self.acquire_headshot_var = tk.BooleanVar(
-            value=self.settings.headshot_on_acquire
-        )
-        ttk.Checkbutton(
-            frame,
-            text="Headshot on acquire",
-            variable=self.acquire_headshot_var,
-        ).grid(row=row, column=0, columnspan=3, sticky="w", pady=(6, 0))
-
-        row += 1
         ttk.Label(frame, text="Target selection").grid(row=row, column=0, sticky="w")
         self.target_var = tk.StringVar(value=self.settings.target_select_type)
         ttk.Combobox(
@@ -423,6 +396,53 @@ class AimbotApp:
         ttk.Entry(hero_frame, textvariable=self.paradox_e_key, width=4).grid(
             row=hero_row, column=2, sticky="w"
         )
+
+    def _build_zones_frame(self, parent: ttk.Frame) -> None:
+        """Build the weighted aim-zone controls."""
+        parent.columnconfigure(0, weight=1)
+        frame = ttk.LabelFrame(parent, text="Aim zones")
+        frame.grid(row=0, column=0, sticky="ew")
+        self.random_zones_var = tk.BooleanVar(value=self.settings.random_zones)
+        ttk.Checkbutton(
+            frame, text="Random weights (all zones)", variable=self.random_zones_var,
+            command=self._update_zone_controls,
+        ).grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(
+            frame, text="Random generates new weights at each Start. Manual weights are relative."
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 8))
+        ttk.Label(frame, text="Zone").grid(row=2, column=0, sticky="w")
+        ttk.Label(frame, text="Weight (0–100)").grid(row=2, column=1, sticky="w")
+        self.zone_enabled_vars = {}
+        self.zone_weight_vars = {}
+        self.zone_checks = {}
+        self.zone_entries = {}
+        for row, zone in enumerate(("head", "body", "legs"), start=3):
+            enabled = tk.BooleanVar(value=getattr(self.settings, f"{zone}_enabled"))
+            weight = tk.StringVar(value=str(getattr(self.settings, f"{zone}_weight")))
+            self.zone_enabled_vars[zone] = enabled
+            self.zone_weight_vars[zone] = weight
+            check = ttk.Checkbutton(
+                frame, text=zone.title(), variable=enabled, command=self._update_zone_controls
+            )
+            check.grid(row=row, column=0, sticky="w")
+            entry = ttk.Spinbox(frame, from_=0, to=100, textvariable=weight, width=8)
+            entry.grid(row=row, column=1, sticky="w", padx=(8, 0))
+            self.zone_checks[zone] = check
+            self.zone_entries[zone] = entry
+        ttk.Label(
+            frame,
+            text="Settings apply on Start. Head/leg estimates are unverified; check Logs.",
+            wraplength=680,
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        self._update_zone_controls()
+
+    def _update_zone_controls(self) -> None:
+        """Dim manual controls in random mode and disable unselected weights."""
+        random_mode = self.random_zones_var.get()
+        for zone in self.zone_enabled_vars:
+            self.zone_checks[zone].state(["disabled"] if random_mode else ["!disabled"])
+            disabled = random_mode or not self.zone_enabled_vars[zone].get()
+            self.zone_entries[zone].state(["disabled"] if disabled else ["!disabled"])
 
     def _build_status_frame(self, parent: ttk.Frame) -> None:
         """Deprecated: status is now in the status bar."""
@@ -501,37 +521,32 @@ class AimbotApp:
         else:
             self.start()
 
-    def _update_headshot_warning(self) -> None:
-        """Show or hide the headshot probability warning."""
-        try:
-            value = float(self.headshot_var.get())
-        except tk.TclError:
-            value = 0.0
-        if value > 0.35:
-            self.headshot_warning.grid()
-        else:
-            self.headshot_warning.grid_remove()
-
-    def _on_headshot_change(self) -> None:
-        """Update headshot percentage label and warning visibility."""
-        try:
-            val = max(0.0, min(1.0, float(self.headshot_var.get())))
-        except tk.TclError:
-            val = 0.0
-        self.headshot_percent.config(text=f"{int(val * 100)}%")
-        self._update_headshot_warning()
-
     def _apply_widget_values(self) -> None:
-        """Update :attr:`settings` from widget values."""
-        # Clamp values to expected ranges
-        try:
-            self.settings.headshot_probability = max(
-                0.0, min(1.0, float(self.headshot_var.get()))
-            )
-        except Exception:
-            self.settings.headshot_probability = 0.25
+        """Validate and update settings from widget values."""
+        random_zones = self.random_zones_var.get()
+        weights = {}
+        for zone, variable in self.zone_weight_vars.items():
+            try:
+                value = int(variable.get())
+                if not 0 <= value <= 100:
+                    raise ValueError
+            except ValueError as exc:
+                if not random_zones:
+                    raise ValueError(
+                        f"{zone.title()} weight must be an integer from 0 to 100"
+                    ) from exc
+                # Invalid inactive edits do not affect random mode or overwrite saved values.
+                value = getattr(self.settings, f"{zone}_weight")
+            weights[zone] = value
+        if not random_zones and not any(
+            self.zone_enabled_vars[zone].get() and weights[zone] for zone in weights
+        ):
+            raise ValueError("Select at least one zone with a positive weight")
+        for zone, weight in weights.items():
+            setattr(self.settings, f"{zone}_weight", weight)
+            setattr(self.settings, f"{zone}_enabled", self.zone_enabled_vars[zone].get())
+        self.settings.random_zones = random_zones
         self.settings.target_select_type = self.target_var.get()
-        self.settings.headshot_on_acquire = self.acquire_headshot_var.get()
 
         self.settings.grey_talon_lock_enabled = self.grey_enabled.get()
         if self.grey_key.get():
@@ -556,7 +571,11 @@ class AimbotApp:
         if self.is_running:
             return
             
-        self._apply_widget_values()
+        try:
+            self._apply_widget_values()
+        except ValueError as exc:
+            messagebox.showerror("Invalid aim zones", str(exc))
+            return
         save_settings(self.settings)
 
         try:
@@ -688,8 +707,12 @@ class AimbotApp:
 
     def on_close(self) -> None:
         """Handle window close event."""
-        self._apply_widget_values()
-        save_settings(self.settings)
+        try:
+            self._apply_widget_values()
+        except ValueError:
+            pass  # Keep the last valid settings rather than saving invalid zone weights.
+        else:
+            save_settings(self.settings)
         
         if self.is_running:
             self.stop()
