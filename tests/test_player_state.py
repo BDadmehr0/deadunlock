@@ -37,12 +37,35 @@ class PlayerMemoryTests(unittest.TestCase):
         memory.read_int = Mock(side_effect=values.__getitem__)
         memory.read_byte = Mock(return_value=2)
         memory.read_longlong = Mock(return_value=0x9000)
-        memory.read_float = Mock(return_value=0.0)
+        memory.read_float = Mock(return_value=1.0)
         data = memory.read_entity(1)
         self.assertEqual(data["hero"], HeroIds.Wraith)
         self.assertEqual(data["team"], 2)
         memory.read_byte.assert_called_once_with(0x5000 + 0x3ef)
         self.assertIn((0x5000 + 0x924,), [call.args for call in memory.read_int.call_args_list])
+
+    def test_position_uses_observed_absolute_origin(self):
+        memory = DeadlockMemory.__new__(DeadlockMemory)
+        memory.get_entity_base = Mock(return_value=(0x5000, 0x8000))
+        memory.read_int = Mock(side_effect=[HeroIds.Abrams.value, 373])
+        memory.read_byte = Mock(return_value=3)
+        memory.read_longlong = Mock(return_value=0x9000)
+        origin = {0x90c8: 11685.875, 0x90cc: -8528.0, 0x90d0: -351.0625}
+        memory.read_float = Mock(side_effect=origin.__getitem__)
+        data = memory.read_entity(2)
+        self.assertEqual(data["position"], (11685.875, -8528.0, -281.0625))
+        self.assertEqual([call.args[0] for call in memory.read_float.call_args_list], list(origin))
+
+    def test_zero_and_nonfinite_origins_are_unavailable(self):
+        for origin in ((0.0, 0.0, 0.0), (float("nan"), 1.0, 2.0)):
+            with self.subTest(origin=origin):
+                memory = DeadlockMemory.__new__(DeadlockMemory)
+                memory.get_entity_base = Mock(return_value=(0x5000, 0x8000))
+                memory.read_int = Mock(return_value=HeroIds.Abrams.value)
+                memory.read_longlong = Mock(return_value=0x9000)
+                memory.read_float = Mock(side_effect=origin)
+                with self.assertRaisesRegex(EntityUnavailable, "Invalid scene origin"):
+                    memory.read_entity(2)
 
     def test_local_controller_does_not_read_unused_entity_slot(self):
         memory = DeadlockMemory.__new__(DeadlockMemory)

@@ -106,6 +106,13 @@ every failed slot. The process still requires read permission under
 ptrace/Yama. A reported candidate does not validate the camera, bone indices,
 game offsets, or writes.
 
+The scene-origin offset was observed on one Proton build. When a bone position
+is unreadable, zero, non-finite, or more than 150 game units from the estimated
+player centre, the aimbot warns and uses that estimated centre instead. This
+sanity check does not prove a bone is correct: head/body bone indices, camera
+angles, the estimated centre, and writes still require live validation. The
+fallback cannot guarantee headshots. No wall or visibility check is performed.
+
 The command-line aimbot and ESP accept `--debug`. The aimbot uses the left
 mouse button to aim; the right button synthesizes a left click without aiming.
 Map alternate fire in the game so the right button does not conflict. The GUI

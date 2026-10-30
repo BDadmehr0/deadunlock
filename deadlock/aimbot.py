@@ -14,6 +14,7 @@ from dataclasses import dataclass
 import random
 import time
 import logging
+import math
 import argparse
 
 from .linux_input import X11Input
@@ -100,6 +101,7 @@ class Aimbot:
 
         self._force_head_until: float = 0.0
         self._last_lock_lost: float = 0.0
+        self._last_bad_bone_warning: float = float("-inf")
 
         # Paradox shortcut state
         self._paradox_next_e: float = 0.0
@@ -154,6 +156,32 @@ class Aimbot:
             self._headshot_cache_time = current_time
 
         return self._headshot_cache
+
+    def _target_position(self, target: dict, bone_index: int | None) -> tuple[float, float, float]:
+        """Use a plausible bone position, otherwise approximate the player's centre mass."""
+        fallback = target["position"]
+        if bone_index is None:
+            return fallback
+        try:
+            bone_array = self.mem.read_longlong(target["node"] + mo.BONE_ARRAY)
+            if not bone_array:
+                raise ValueError("null bone array")
+            address = bone_array + bone_index * mo.BONE_STEP
+            bone = tuple(self.mem.read_float(address + offset) for offset in (0, 4, 8))
+            # This bound is only a sanity check, not proof that the bone is correct.
+            if (not all(math.isfinite(value) for value in bone)
+                    or bone == (0.0, 0.0, 0.0) or math.dist(bone, fallback) > 150):
+                raise ValueError("implausible bone position")
+            return bone
+        except (OSError, OverflowError, ValueError) as exc:
+            now = time.monotonic()
+            if now - self._last_bad_bone_warning >= 5:
+                logger.warning(
+                    "Bone data unavailable or implausible (%s); using approximate centre mass. "
+                    "Headshots and offsets are not validated.", exc
+                )
+                self._last_bad_bone_warning = now
+            return fallback
 
     def pause(self) -> None:
         """Pause the aimbot."""
@@ -344,18 +372,7 @@ class Aimbot:
                         if self.should_aim_for_head()
                         else get_body_bone_index(target["hero"])
                     )
-                    if bone_index is not None:
-                        bone_array = self.mem.read_longlong(
-                            target["node"] + mo.BONE_ARRAY
-                        )
-                        head_vector = (
-                            self.mem.read_float(bone_array + bone_index * mo.BONE_STEP),
-                            self.mem.read_float(bone_array + bone_index * mo.BONE_STEP + 4),
-                            self.mem.read_float(bone_array + bone_index * mo.BONE_STEP + 8),
-                        )
-                        target_pos = head_vector
-                    else:
-                        target_pos = target["position"]
+                    target_pos = self._target_position(target, bone_index)
 
                     # Gradually rotate the camera towards the desired angles for a
                     # slightly more human-like movement.

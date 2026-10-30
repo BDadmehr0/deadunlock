@@ -3,6 +3,7 @@ from __future__ import annotations
 """Read and write Deadlock memory through Linux procfs."""
 
 from dataclasses import dataclass
+import math
 import os
 from typing import Dict, Tuple
 
@@ -167,11 +168,11 @@ class DeadlockMemory:
         if not game_scene_node:
             raise EntityUnavailable(f"Scene node pointer for player {index} is null")
         pos_addr = game_scene_node + mo.NODE_POSITION
-        pos = (
-            self.read_float(pos_addr),
-            self.read_float(pos_addr + 4),
-            self.read_float(pos_addr + 8) + 70,
-        )
+        origin = tuple(self.read_float(pos_addr + offset) for offset in (0, 4, 8))
+        if not all(math.isfinite(value) for value in origin) or origin == (0.0, 0.0, 0.0):
+            raise EntityUnavailable(f"Invalid scene origin for player {index}")
+        # Approximate centre mass; the game model and current build may differ.
+        pos = (origin[0], origin[1], origin[2] + 70)
         team = self.read_byte(controller_base + mo.TEAM_OFFSET)
         health = self.read_int(pawn + mo.HEALTH_OFFSET)
         
